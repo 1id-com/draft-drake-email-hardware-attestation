@@ -3,7 +3,7 @@
 **Hardware Attestation for Email Sender Verification**
 
 This is the companion repository for the IETF Internet-Draft
-[draft-drake-email-hardware-attestation-00](https://datatracker.ietf.org/doc/draft-drake-email-hardware-attestation/).
+[draft-drake-email-hardware-attestation-02](https://datatracker.ietf.org/doc/draft-drake-email-hardware-attestation/).
 
 ## Abstract
 
@@ -34,19 +34,23 @@ artificial intelligence.
 ## Repository Contents
 
 ```
-draft-drake-email-hardware-attestation-00.xml   # I-D source (xml2rfc v3)
+draft-drake-email-hardware-attestation-02.xml   # I-D source (xml2rfc v3)
+draft-drake-email-hardware-attestation-02.txt   # rendered text
+draft-drake-email-hardware-attestation-02.html  # rendered HTML
 examples/
-  rfc_example_1_sovereign_tpm_nodejs_mode12-72.eml  # Sovereign TPM, Node.js, Mode 1+2
-  rfc_example_2_portable_piv_python_mode2-72.eml    # Portable PIV, Python, Mode 2
-  rfc_example_3_enclave_python_mode12-72.eml        # Enclave (Apple SE), Python, Mode 1+2
-  rfc_example_4_virtual_vtpm_python_mode12-72.eml   # Virtual vTPM, Python, Mode 1+2
-  rfc_example_5_declared_python_mode2-72.eml        # Declared (software), Python, Mode 2
-  rfc_example_6_sovereign_tpm_python_mode1-72.eml   # Sovereign TPM, Python, Mode 1 only
+  example_1_sovereign_tpm_combined.eml            # Sovereign: Intel firmware TPM (Windows 10)
+  example_2_portable_piv_combined.eml             # Portable: YubiKey PIV
+  example_3_enclave_secure_enclave_combined.eml   # Enclave: Apple M4 Secure Enclave
+  example_4_virtual_vtpm_combined.eml             # Virtual: VMware vTPM (Windows 11)
+  example_5_declared_software_combined.eml        # Declared: software P-256 key
+  SHA256SUMS                                      # exact bytes (CRLF) of the five emails
 ```
 
-The `.eml` files are real emails sent through production infrastructure
-(Stalwart SMTP with DKIM signing) and verified by the `hw-attest-verify`
-tool.  They are the same emails reproduced in Appendix A of the draft.
+The `.eml` files are real emails, each carrying both modes (Combined mode),
+sent on 25 September 2026 through MailPal.com with the published reference
+implementation (`oneid` 3.1.1, `oneid-enroll` 2.2.0, no administrative
+privileges), stamped by the receiving verifier and copied from the receiving
+message store.  They are the same emails reproduced in the draft's appendix.
 
 ## Building the Draft
 
@@ -54,8 +58,8 @@ The XML source uses [xml2rfc](https://xml2rfc.tools.ietf.org/) v3 format:
 
 ```bash
 pip install xml2rfc
-xml2rfc draft-drake-email-hardware-attestation-00.xml --html
-xml2rfc draft-drake-email-hardware-attestation-00.xml --text
+xml2rfc draft-drake-email-hardware-attestation-02.xml --html
+xml2rfc draft-drake-email-hardware-attestation-02.xml --text
 ```
 
 ## Verifying the Example Emails
@@ -63,14 +67,15 @@ xml2rfc draft-drake-email-hardware-attestation-00.xml --text
 Install the reference verification tool:
 
 ```bash
-pip install hw-attest-verify
+pip install 'hw-attest-verify>=2.0.2'
 ```
 
-Verify any example email (use `--no-time-check` since the attestation
-timestamps will be in the past):
+Verify any example email with the draft's appendix command (use
+`--no-time-check` since the attestation timestamps are in the past):
 
 ```bash
-hw-attest-verify --auth-results --no-time-check examples/rfc_example_1_sovereign_tpm_nodejs_mode12-72.eml
+python3 -m hw_attest_verify --auth-results --no-time-check --hostname mailpal.com \
+  < examples/example_1_sovereign_tpm_combined.eml
 ```
 
 ## Trust Tiers
@@ -108,7 +113,7 @@ implementation exists at [1id.com](https://1id.com).  The implementation
 includes:
 
 - **Server-side verification** of hardware identity certificate chains
-  with anti-Sybil enforcement (one device per identity per Issuer).
+  with anti-Sybil enforcement (one identity per hardware anchor).
 - **Client-side attestation** via Python SDK, Node.js SDK, and a
   cross-platform Go binary (`oneid-enroll`) supporting Windows TBS,
   Linux /dev/tpmrm0, macOS Secure Enclave (via Swift helper), and
@@ -117,6 +122,9 @@ includes:
   with selective disclosure per RFC 9901.
 - **Direct hardware attestation** (Mode 1) with CMS SignedData per
   RFC 5652, including full Issuer-certified certificate chains.
+- **Sender-constrained tokens**: every access token carries `cnf.jwk`
+  (the enrolled key), and the 1id.com and MailPal.com APIs accept a token
+  only with an RFC 9421 HTTP Message Signature by that key.
 - **Production email delivery** through Stalwart SMTP with DKIM,
   verified end-to-end across all five trust tiers using the
   `hw-attest-verify` reference tool.

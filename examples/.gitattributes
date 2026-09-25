@@ -1,0 +1,4 @@
+# Real emails: keep the exact CRLF bytes the signatures and SHA256SUMS cover.
+*.eml -text
+# cmd.exe step files for Example 4
+*.cmd text eol=crlf
