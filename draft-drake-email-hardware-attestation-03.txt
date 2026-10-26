@@ -1,0 +1,3752 @@
+
+
+
+
+Network Working Group                                           C. Drake
+Internet-Draft                                                   1id.com
+Intended status: Experimental                            25 October 2026
+Expires: 28 April 2027
+
+
+           Hardware Attestation for Email Sender Verification
+               draft-drake-email-hardware-attestation-03
+
+Abstract
+
+   This document defines two email bindings for proving properties of an
+   automated sender using the durable identity and anchor architecture
+   of the Agent Identity Registry System (AIRS).  Mode 1 carries a
+   detached CMS signature made by a message-signing proof key.  It can
+   provide manufacturer-rooted hardware provenance, Registrar-backed
+   AIRS identity binding, or both.  Mode 2 carries a per-message SD-JWT
+   that allows a Registrar to assert selected properties without
+   requiring disclosure of the sender's canonical AIRS identifier.
+
+   The AIRS identity0 model, canonical aid identifier, trust tiers,
+   anchor semantics, enrollment rules, and Registrar trust boundary are
+   defined by [I-D.drake-agent-identity-problem-statement] and
+   [I-D.drake-agent-identity-registry].  Authoritative resolution of the
+   current Registrar/OAuth issuer is defined by
+   [I-D.drake-agent-identity-resolution].  This document does not
+   redefine those concepts; it defines how email messages bind to and
+   verify them.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 28 April 2027.
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 1]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
+     1.1.  Application Design Principles . . . . . . . . . . . . . .   4
+     1.2.  Requirements Language . . . . . . . . . . . . . . . . . .   5
+     1.3.  Terminology . . . . . . . . . . . . . . . . . . . . . . .   5
+   2.  Applicability . . . . . . . . . . . . . . . . . . . . . . . .   6
+   3.  Email Binding Architecture  . . . . . . . . . . . . . . . . .   6
+     3.1.  Canonical Identifier Use  . . . . . . . . . . . . . . . .   6
+     3.2.  Email Mechanism Type Mapping  . . . . . . . . . . . . . .   6
+     3.3.  Authoritative Registrar Key Discovery . . . . . . . . . .   7
+   4.  Mode 1: Direct Hardware Attestation . . . . . . . . . . . . .   8
+     4.1.  Evidence Profiles . . . . . . . . . . . . . . . . . . . .   8
+     4.2.  Header Field and CMS Profile  . . . . . . . . . . . . . .   9
+     4.3.  CMS Algorithm Mapping . . . . . . . . . . . . . . . . . .  13
+     4.4.  Registrar Binding JWS . . . . . . . . . . . . . . . . . .  15
+     4.5.  Verification Algorithm  . . . . . . . . . . . . . . . . .  16
+     4.6.  Authentication-Results Integration  . . . . . . . . . . .  17
+   5.  Mode 2: SD-JWT Trust Proof  . . . . . . . . . . . . . . . . .  17
+     5.1.  Trust Semantics . . . . . . . . . . . . . . . . . . . . .  17
+     5.2.  Header Field and Claims . . . . . . . . . . . . . . . . .  18
+     5.3.  Message Binding via Issuer-Signed Nonce . . . . . . . . .  19
+     5.4.  Verification Algorithm  . . . . . . . . . . . . . . . . .  20
+     5.5.  Authentication-Results Integration  . . . . . . . . . . .  21
+   6.  Combined Mode . . . . . . . . . . . . . . . . . . . . . . . .  21
+   7.  Interaction with Existing Email Authentication  . . . . . . .  22
+     7.1.  Forwarding and Message Modification . . . . . . . . . . .  22
+     7.2.  Human-Readable Display Names  . . . . . . . . . . . . . .  23
+   8.  Message Submission Requirements . . . . . . . . . . . . . . .  23
+     8.1.  Identity and Account Policy . . . . . . . . . . . . . . .  23
+     8.2.  Proof-Key Control . . . . . . . . . . . . . . . . . . . .  23
+     8.3.  Messages Without Attestation  . . . . . . . . . . . . . .  24
+     8.4.  Duplicate Header Rejection  . . . . . . . . . . . . . . .  24
+     8.5.  Freshness at Submission . . . . . . . . . . . . . . . . .  24
+
+
+
+Drake                     Expires 28 April 2027                 [Page 2]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   9.  Interoperability Considerations . . . . . . . . . . . . . . .  24
+     9.1.  Backward Compatibility  . . . . . . . . . . . . . . . . .  24
+     9.2.  DKIM Coverage of Attestation Headers  . . . . . . . . . .  24
+     9.3.  Finalize Before Signing . . . . . . . . . . . . . . . . .  25
+     9.4.  Relationship to DKIM and DKIM2 Tag Syntax . . . . . . . .  25
+     9.5.  Header Size Considerations  . . . . . . . . . . . . . . .  26
+   10. Implementation Status . . . . . . . . . . . . . . . . . . . .  26
+     10.1.  1id.com Registrar and Sender Implementation  . . . . . .  26
+     10.2.  MailPal.com Verifier and Relay . . . . . . . . . . . . .  27
+   11. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  27
+     11.1.  Message Header Fields  . . . . . . . . . . . . . . . . .  27
+     11.2.  Email Authentication Methods and Properties  . . . . . .  28
+     11.3.  Email Authentication Result Names  . . . . . . . . . . .  29
+     11.4.  Media Types for Explicit JWT Typing  . . . . . . . . . .  30
+       11.4.1.  application/airs-email-binding+jwt . . . . . . . . .  31
+       11.4.2.  application/airs-email+sd-jwt  . . . . . . . . . . .  31
+     11.5.  No Separate Hardware-Type, DNS, or URN Registration  . .  32
+   12. Security Considerations . . . . . . . . . . . . . . . . . . .  32
+     12.1.  Message Binding and Replay . . . . . . . . . . . . . . .  33
+     12.2.  Signing-Purpose Separation . . . . . . . . . . . . . . .  33
+     12.3.  Identity Substitution  . . . . . . . . . . . . . . . . .  33
+     12.4.  Registrar Trust Boundary . . . . . . . . . . . . . . . .  33
+     12.5.  Manufacturer and Attestation Root Trust  . . . . . . . .  34
+     12.6.  Binding and Key Compromise . . . . . . . . . . . . . . .  34
+     12.7.  Combined-Mode Dependence . . . . . . . . . . . . . . . .  34
+     12.8.  Endpoint Compromise  . . . . . . . . . . . . . . . . . .  35
+     12.9.  Header Stripping and Forwarding  . . . . . . . . . . . .  35
+     12.10. Authentication-Results Trust Boundary  . . . . . . . . .  35
+     12.11. Cryptographic Agility  . . . . . . . . . . . . . . . . .  35
+   13. Privacy Considerations  . . . . . . . . . . . . . . . . . . .  35
+     13.1.  Mode-1 Linkability . . . . . . . . . . . . . . . . . . .  36
+     13.2.  Mode-2 Selective Disclosure  . . . . . . . . . . . . . .  36
+     13.3.  Registrar Observation  . . . . . . . . . . . . . . . . .  36
+     13.4.  Data Minimization  . . . . . . . . . . . . . . . . . . .  37
+     13.5.  Human-Related Information  . . . . . . . . . . . . . . .  37
+   14. Normative References  . . . . . . . . . . . . . . . . . . . .  37
+   15. Informative References  . . . . . . . . . . . . . . . . . . .  40
+   Appendix A.  Live Email Examples  . . . . . . . . . . . . . . . .  41
+     A.1.  Example 1: Sovereign-Tier TPM (Combined Mode) . . . . . .  43
+     A.2.  Example 2: Portable-Tier PIV/YubiKey (Combined Mode)  . .  48
+     A.3.  Example 3: Enclave-Tier Apple Secure Enclave (Combined
+           Mode) . . . . . . . . . . . . . . . . . . . . . . . . . .  52
+     A.4.  Example 4: Virtual-Tier vTPM (Combined Mode)  . . . . . .  56
+     A.5.  Example 5: Declared-Tier Software Key (Combined Mode) . .  61
+     A.6.  Verification Failure Examples . . . . . . . . . . . . . .  65
+   Appendix B.  Acknowledgments  . . . . . . . . . . . . . . . . . .  66
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  67
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 3]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+1.  Introduction
+
+   SPF [RFC7208], DKIM [RFC6376], and DMARC [RFC9989] provide domain-
+   and infrastructure-layer authorization, authentication, alignment,
+   and policy signals.  They do not identify the autonomous actor that
+   caused a message to be sent, nor do they establish durable continuity
+   of that actor across domains, providers, credentials, or hardware
+   changes.
+
+   The general motivation and the strict meaning of identity0 are
+   defined by [I-D.drake-agent-identity-problem-statement].  AIRS
+   [I-D.drake-agent-identity-registry] supplies the durable subject,
+   enrolled anchor bindings, operational proof keys, trust tiers, and
+   Registrar trust boundary.  This specification applies that foundation
+   to email.  It deliberately does not define another identity model,
+   hardware taxonomy, enrollment ceremony, or reputation system.
+
+   This document defines two application mechanisms:
+
+   1.  *Mode 1: Direct Hardware Attestation.* A Hardware-Attestation
+       header carries a detached CMS [RFC5652] signature made by the
+       Mode-1 signing key.  Manufacturer-rooted evidence can establish
+       hardware provenance.  A Registrar binding assertion can
+       additionally authenticate a canonical AIRS aid and trust tier.
+
+   2.  *Mode 2: SD-JWT Trust Proof.* A Hardware-Trust-Proof header
+       carries a per-message SD-JWT [RFC9901].  The sender can disclose
+       a canonical aid for identified AIRS verification or withhold it
+       and expose only selected properties under receiver-local issuer
+       policy.
+
+1.1.  Application Design Principles
+
+   Canonical ownership  Identity0, canonical identifiers, trust tiers,
+      anchor scarcity, lifecycle, and Registrar accreditation are owned
+      by the companion specifications and are referenced rather than
+      restated here.
+
+   Message binding  An attestation that is valid for one message MUST
+      NOT be transferable to different headers or body content.
+
+   Proof is not behavior  A valid proof says what actor/key/hardware
+      property was verified; it does not say that the message is benign,
+      authorized for a business action, or worthy of positive
+      reputation.
+
+   Explicit trust path  Manufacturer-rooted evidence and Registrar-
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 4]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+      backed assertions are different trust paths.  A verifier MUST know
+      which path established a result and MUST NOT silently treat
+      Registrar verification as direct manufacturer verification, or
+      vice versa.
+
+   Privacy by application choice  Mode 1 is intentionally linkable when
+      an aid or stable proof key is exposed.  Mode 2 permits selective
+      or pseudonymous disclosure where the receiving policy does not
+      require identity0 continuity.
+
+1.2.  Requirements Language
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in BCP
+   14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+1.3.  Terminology
+
+   Foundational identity and AIRS terms are used as defined in
+   [I-D.drake-agent-identity-problem-statement] and
+   [I-D.drake-agent-identity-registry].
+
+   Manufacturer-rooted Mode 1  Mode 1 in which the message-signing proof
+      key is authenticated by evidence that the verifier validates to an
+      accepted manufacturer or attestation root.  This establishes
+      hardware/key provenance; it does not by itself establish AIRS
+      identity binding.
+
+   Registrar-bound Mode 1  Mode 1 carrying a Registrar-signed binding
+      assertion that binds a canonical aid, the operational proof key,
+      and the asserted AIRS trust tier.
+
+   Identified Mode 2  A Mode-2 presentation that discloses canonical sub
+      and is therefore verified against that identity's authoritative
+      current issuer.
+
+   Hidden-identity Mode 2  A Mode-2 presentation that withholds sub.  It
+      is an issuer property assertion under receiver-local issuer
+      policy, not proof of current sponsorship or identity0 continuity.
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 5]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+2.  Applicability
+
+   This specification is intended for autonomous or automated senders
+   for which a receiver benefits from durable actor continuity, verified
+   hardware provenance, or a Registrar-backed property assertion.  It
+   does not require every process, model invocation, container, or
+   message-generation instance to have a separate identity0; the
+   identity boundary is the independently accountable actor defined by
+   the Problem Statement.
+
+3.  Email Binding Architecture
+
+   The canonical AIRS architecture is defined by
+   [I-D.drake-agent-identity-registry].  This section states only the
+   mappings required to interpret the email wire formats.
+
+3.1.  Canonical Identifier Use
+
+   When this document carries an AIRS identity identifier, it carries
+   the permanent canonical aid (a URN, [RFC8141]) defined by the
+   Registry specification, for example the documentation identifier
+   urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg, which never resolves.  A
+   handle MUST NOT be used in the aid parameter or the Mode-2 sub claim
+   because verification and long-lived state require the canonical
+   identifier.
+
+   An aid in the Registry's test namespace (urn:aid:test:) carries no
+   production assurance.  A verifier applying production policy MUST
+   report it as policy, and MUST NOT report a tier or aid property for
+   it.
+
+3.2.  Email Mechanism Type Mapping
+
+   The typ values in Mode 1 are application mappings to the Registry-
+   owned mechanism/tier definitions.  They do not create an independent
+   hardware taxonomy:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 6]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   +=====+====================================+========================+
+   | typ | Registry tier when                 | Application mechanism  |
+   |     | Registrar-bound                    |                        |
+   +=====+====================================+========================+
+   | TPM | sovereign                          | Physical TPM-backed    |
+   |     |                                    | proof key              |
+   +-----+------------------------------------+------------------------+
+   | PIV | portable                           | Physical PIV/token-    |
+   |     |                                    | backed proof key       |
+   +-----+------------------------------------+------------------------+
+   | ENC | enclave                            | Enclave-class proof    |
+   |     |                                    | key                    |
+   +-----+------------------------------------+------------------------+
+   | VRT | virtual                            | Virtual/infrastructure |
+   |     |                                    | protected key          |
+   +-----+------------------------------------+------------------------+
+   | SFT | declared                           | Software-managed proof |
+   |     |                                    | key                    |
+   +-----+------------------------------------+------------------------+
+
+                                  Table 1
+
+   For Registrar-bound Mode 1, the asserted AIRS tier MUST match this
+   mapping and the verifier MUST apply the assurance semantics defined
+   by the Registry specification.  Manufacturer-rooted Mode 1 uses typ
+   only to identify the mechanism whose provenance was verified; without
+   a Registrar binding it MUST NOT be reported as an AIRS tier.  In
+   particular, ENC and VRT do not acquire a one-physical-unit-per-
+   identity scarcity property merely because the key is hardware backed.
+   An ENC binding gives continuity of control of the key, not proof of
+   how the key is held (see the enclave tier in the Registry
+   specification); this document adds no stronger claim.
+
+3.3.  Authoritative Registrar Key Discovery
+
+   Whenever a presentation discloses a canonical aid, the verifier MUST
+   resolve that identifier using [I-D.drake-agent-identity-resolution]
+   and obtain its authoritative currentIssuer.  If the identity has no
+   current authorized issuer, Registrar-backed verification fails.  A
+   verifier MAY satisfy this step from a cached resolution result that
+   is within the bound given by the Resolution specification; the
+   freshness of the Registrar's assertion is carried by its exp, so a
+   new lookup for every message is not required.
+
+   The verifier then obtains OAuth Authorization Server Metadata for
+   that exact issuer as specified by [RFC8414].  An issuer used with
+   this Email profile MUST publish jwks_uri.  The metadata issuer value
+   MUST exactly equal currentIssuer; otherwise the metadata MUST NOT be
+
+
+
+Drake                     Expires 28 April 2027                 [Page 7]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   used.  Absence of jwks_uri is a permanent verification error.
+   Registrar signing keys are obtained only from that authenticated JWK
+   Set.  A token, certificate, or JWS supplied by the sender MUST NOT
+   bootstrap its own issuer authority.
+
+   For hidden-identity Mode 2 there is intentionally no per-identity
+   resolution step.  The receiver first decides by local policy that the
+   visible iss value is an issuer it trusts for the asserted property;
+   only then may it use RFC 8414 discovery for that issuer.  Such a
+   result does not establish current sponsorship of an undisclosed AIRS
+   identity.
+
+4.  Mode 1: Direct Hardware Attestation
+
+   Mode 1 binds the email to a message-signing proof key with a detached
+   CMS SignedData signature.  The same wire format supports two distinct
+   trust paths: manufacturer-rooted key provenance and Registrar-backed
+   AIRS identity binding.
+
+4.1.  Evidence Profiles
+
+   The CMS signer certificate carries the public key corresponding to
+   the Mode-1 signing key.  Trust in that key is established by one or
+   both of the following profiles:
+
+   Manufacturer-rooted  The signer certificate or other mechanism-
+      specific certificate path carried in SignedData directly
+      authenticates the message-signing proof key to a manufacturer or
+      attestation root accepted by the verifier.  The verifier MUST
+      ensure the evidence actually binds that same proof key and is
+      consistent with typ.  A manufacturer certificate for a different
+      device key is insufficient.  For example, a TPM EK certificate
+      alone does not prove that an arbitrary AK that signed the message
+      is resident in that TPM.  Where no standardized direct evidence
+      binds the signing key to the manufacturer-rooted device, this
+      profile is unavailable and the Registrar-bound profile is used.  A
+      mechanism has a manufacturer-rooted profile only where a published
+      specification defines evidence that binds a signing key to the
+      device; an implementation MUST NOT invent such evidence and report
+      it as this profile.  This version of the document names no such
+      profile, so Mode 1 is Registrar-bound until one is named, with its
+      format reference and test vectors, by a later revision.
+
+   Registrar-bound  The header carries both aid and bind.  The bind
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                 [Page 8]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+      value is a compact JWS whose payload binds the canonical aid, the
+      exact operational proof public key, and the AIRS trust tier.  It
+      is signed by the identity's authoritative current Registrar and
+      verified using Section 3.3.  The verifier relies on that Registrar
+      to have performed the Registry-defined enrollment checks for the
+      asserted tier.
+
+   A proof MAY satisfy both profiles when manufacturer evidence and a
+   current Registrar binding assertion authenticate the same operational
+   proof key.  These are then independent evidence paths only to the
+   extent that their trust anchors are actually independent.
+
+4.2.  Header Field and CMS Profile
+
+   Hardware-Attestation = "Hardware-Attestation" ":"
+                          hw-attest-value CRLF
+
+   ; The tag layout follows the tag-spec convention of RFC 6376
+   ; Section 3.2, which DKIM2 also reuses, so a DKIM tag-list
+   ; tokenizer can be reused to split this field.  Unlike a generic
+   ; DKIM tag-list, the tag order here is fixed and no extension
+   ; tags are defined.
+
+   hw-attest-value = hw-version ";" hw-type ";" hw-algorithm
+                     ";" hw-signed-hdrs ";" hw-body-hash
+                     ";" hw-timestamp ";" hw-chain
+                     [";" hw-aid ";" hw-bind]
+                     [";"] [FWS]
+
+   hw-version     = [FWS] %s"v"     [FWS] "=" [FWS] "1"           [FWS]
+   hw-type        = [FWS] %s"typ"   [FWS] "=" [FWS] mech-code     [FWS]
+   hw-algorithm   = [FWS] %s"alg"   [FWS] "=" [FWS] alg-code      [FWS]
+   hw-signed-hdrs = [FWS] %s"h"     [FWS] "=" [FWS] folded-hdrs   [FWS]
+   hw-body-hash   = [FWS] %s"bh"    [FWS] "=" [FWS] folded-b64url [FWS]
+   hw-timestamp   = [FWS] %s"ts"    [FWS] "=" [FWS] folded-digits [FWS]
+   hw-chain       = [FWS] %s"chain" [FWS] "=" [FWS] folded-base64 [FWS]
+   hw-aid         = [FWS] %s"aid"   [FWS] "=" [FWS] folded-urn    [FWS]
+   hw-bind        = [FWS] %s"bind"  [FWS] "=" [FWS] folded-jws    [FWS]
+
+   mech-code      = %s"TPM" / %s"PIV" / %s"ENC" / %s"VRT" / %s"SFT"
+   alg-code       = %s"RS256" / %s"ES256" / %s"PS256"
+
+   ; Every tag value MAY carry internal folding whitespace, which is
+   ; not part of the value.  The comment beside each production gives
+   ; what that value MUST match once the whitespace has been removed.
+
+   folded-hdrs    = 1*(hdr-name-char / ":" / WSP / FWS)
+                        ; -> hdr-name *(":" hdr-name)
+
+
+
+Drake                     Expires 28 April 2027                 [Page 9]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   folded-b64url  = 1*(b64url-char / WSP / FWS)
+                        ; -> 1*b64url-char
+   folded-digits  = 1*(DIGIT / WSP / FWS)
+                        ; -> ts-value
+   folded-base64  = 1*(b64-char / WSP / FWS)
+                        ; -> 1*b64-char
+   folded-urn     = 1*(urn-char / WSP / FWS)
+                        ; -> aid-urn
+   folded-jws     = 1*(b64url-char / "." / WSP / FWS)
+                        ; -> compact-jws
+
+   compact-jws    = base64url "." base64url "." base64url
+   base64url      = 1*b64url-char
+   b64url-char    = ALPHA / DIGIT / "-" / "_"
+   b64-char       = ALPHA / DIGIT / "+" / "/" / "="
+   urn-char       = ALPHA / DIGIT / "-" / ":"
+   hdr-name       = 1*hdr-name-char
+   hdr-name-char  = ALPHA / DIGIT / "-"
+   ts-value       = "0" / (%x31-39 *19DIGIT)   ; no leading zeros
+   aid-urn        = <canonical aid URN defined by the AIRS Registry>
+   FWS            = <FWS defined by RFC 6376 Section 2.8>
+   WSP            = <WSP defined by RFC 5234>
+
+   The grammar is ABNF [RFC5234], with %s marking a case-sensitive
+   string [RFC7405].  base64url and base64 use the encodings of
+   [RFC4648]; base64url is emitted without padding.  Parameter names in
+   a generated field MUST use the lowercase forms shown above, and the
+   tags MUST appear in the order shown.  A single trailing semicolon
+   after the last tag is OPTIONAL: a generator MAY emit it, and a
+   verifier MUST accept the field with or without it.  This version
+   defines no extension tags.  Unlike a generic DKIM tag-list, an
+   unrecognized tag name MUST cause the field to be treated as malformed
+   rather than being ignored, because the signed reconstruction below
+   has to be reproducible byte-for-byte by every verifier and cannot
+   carry content the verifier does not understand.  A header name that
+   contains a character outside hdr-name-char cannot be listed in h.  A
+   ts value greater than 18446744073709551615 is malformed (permerror).
+
+   CMS objects, compact JWS values, and long header-name lists all
+   exceed one physical email line, so every tag value in this field
+   other than the single-token v, typ, and alg values MAY carry internal
+   folding whitespace.  No value defined here can contain significant
+   whitespace, so this specification applies to all of its tags the rule
+   that [RFC6376] states for the DKIM b= and bh= tag values: WSP and FWS
+   appearing anywhere inside a tag value is not part of that value and
+   MUST be removed in its entirety before the value is decoded, parsed,
+   or compared.  Folding whitespace MAY therefore be inserted at any
+   point within a tag value solely to satisfy header-field line-length
+
+
+
+Drake                     Expires 28 April 2027                [Page 10]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   requirements, including inside a base64 or compact-JWS token and
+   inside a header field name in the h list.  Deployed signers are
+   observed to fold header-name lists in mid-token in exactly this way,
+   so a verifier that accepts folding only at separator boundaries will
+   reject otherwise valid mail.  Whitespace inside a tag _name_ is not
+   permitted.  RFC 5322 unfolding alone is not sufficient for this
+   purpose because it removes the folding CRLF but leaves the following
+   WSP.  Therefore, whether a parser receives the raw folded field or an
+   already-unfolded field, it MUST perform this removal before
+   interpreting any value.  After removal, each value MUST match the
+   post-removal production shown beside its production above; in
+   particular the bind value MUST match compact-jws and the h value MUST
+   match hdr-name *(":" hdr-name).
+
+   aid and bind either both appear or both are absent.  A sender MUST
+   NOT place an aid in Mode 1 without the Registrar binding assertion
+   required below.
+
+   v  Protocol version; exactly 1.
+
+   typ  The application mechanism code from Section 3.2.  The value is
+      message-signed and MUST match the verified evidence or Registrar
+      assertion.
+
+   alg  A compact label for the CMS signer algorithm, mapped normatively
+      by Section 4.3.  The JOSE-style labels identify the algorithm
+      choice only; CMS signature-value encoding follows the cited CMS
+      specifications, not JOSE encoding.  New deployments SHOULD prefer
+      PS256 for RSA or ES256 for P-256.
+
+   h  A colon-separated DKIM-style list of header field names.  The
+      signer MUST include at least From, To, Cc, Subject, Date, Message-
+      ID, Sender, Reply-To, In-Reply-To, References, MIME-Version,
+      Content-Type, and Content-Transfer-Encoding, whether or not each
+      is present: under the DKIM rules a listed field that is absent
+      protects against its later addition, and these fields change how
+      the message is displayed or answered.  Header selection and
+      repeated-name processing follow the DKIM h= conventions of
+      [RFC6376].  The Hardware-Attestation field itself MUST NOT appear
+      in h; it is implicitly appended last as described below.  In
+      Combined mode the signer MUST also include Hardware-Trust-Proof.
+
+   bh  Base64url-encoded SHA-256 of the email body after DKIM simple
+      body canonicalization.
+
+   ts  Unix time at which the Mode-1 signature was created, serialized
+      as unsigned decimal without leading zeroes.  Freshness is receiver
+      policy; it is not an identity lifetime.
+
+
+
+Drake                     Expires 28 April 2027                [Page 11]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   chain  Base64-encoded CMS SignedData as profiled below.
+
+   aid  The canonical AIRS identifier.  It is present only with bind and
+      MUST equal the binding JWS sub claim.
+
+   bind  A compact Registrar binding JWS as profiled in Section 4.4.
+
+   The message input is constructed as follows:
+
+   attestation-input = label || h-hash || bh-raw || ts-bytes
+
+   label    = "AIRS-Email-Mode1-v1" || 0x00     ; 20 bytes
+   h-hash   = SHA-256(canonicalized-headers)  ; 32 bytes
+   bh-raw   = SHA-256(canonicalized body)     ; 32 bytes
+   ts-bytes = big-endian uint64(ts)           ; 8 bytes
+
+   The attestation-input is exactly 92 octets: the 20-octet label and 72
+   octets of digests and time.  For h-hash, the headers named by h are
+   selected using the DKIM header-selection rules and canonicalized with
+   DKIM relaxed header canonicalization, each followed by CRLF.  A
+   Hardware-Trust-Proof field named in h is the one exception: like the
+   Hardware-Attestation field below, its name is lowercased, it is
+   unfolded, and every WSP character anywhere in its value is deleted,
+   so that no legal refolding in transit changes the signed input.  The
+   Hardware-Attestation field itself is then appended using the
+   signature canonicalization that [I-D.ietf-dkim-dkim2-spec] applies to
+   its own signature-bearing fields: the field name is lowercased to
+   hardware-attestation, the field is unfolded, every WSP character
+   anywhere in the field value is deleted, the chain tag value is
+   replaced by the empty string (the chain= tag itself remains), and the
+   result is followed by CRLF.  A verifier applies this to the field as
+   received; a generator applies it to the field it emits, which MUST
+   use the lowercase tag names and fixed order of the ABNF above.  All
+   other tag values, including aid and the compact bind JWS, remain
+   covered.  Because only whitespace is removed, every legal folding of
+   the field, and any legal RFC 5322 refolding applied in transit,
+   produces the same signed input.
+
+   The chain CMS object MUST use SignedData [RFC5652] with
+   encapContentInfo present, eContentType equal to id-data, and eContent
+   omitted.  The externally supplied detached content is the exact
+   92-octet attestation-input; implementations MUST NOT pre-hash that
+   value and then present the digest to CMS as though it were the
+   content.  SignerInfo signedAttrs MUST be absent in version 1, so the
+   CMS signature/digest processing is unambiguous.  The CMS
+   digestAlgorithm is SHA-256 and the SignerInfo signatureAlgorithm MUST
+   match the alg mapping in Section 4.3.  The SignedData certificates
+   field MUST contain the signer certificate.  It MAY also contain
+
+
+
+Drake                     Expires 28 April 2027                [Page 12]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   certificates needed by a manufacturer-rooted evidence path.  In the
+   Registrar-bound path the signer certificate is only a carrier for the
+   operational proof public key.  It MAY be self-signed or otherwise
+   untrusted as a certificate path; the verifier's authority for the
+   aid-to-key binding comes from bind, not from trusting that
+   certificate's issuer.
+
+4.3.  CMS Algorithm Mapping
+
+   Version 1 supports exactly the following mappings.  Implementations
+   MUST reject a mismatch between alg, SignerInfo digestAlgorithm,
+   SignerInfo signatureAlgorithm, its parameters, and the signer public-
+   key type.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 13]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   +=======+=========================+=================================+
+   | alg   | CMS signatureAlgorithm  | Requirements                    |
+   +=======+=========================+=================================+
+   | RS256 | sha256WithRSAEncryption | RSASSA-PKCS1-v1_5 with SHA-256  |
+   |       | 1.2.840.113549.1.1.11   | as specified by [RFC5754].      |
+   |       |                         | AlgorithmIdentifier parameters  |
+   |       |                         | are NULL when generated;        |
+   |       |                         | receivers also accept absent    |
+   |       |                         | parameters as required by RFC   |
+   |       |                         | 5754.  RFC 5754 adopts the RSA  |
+   |       |                         | conventions of [RFC3370],       |
+   |       |                         | under which CMS                 |
+   |       |                         | implementations support the     |
+   |       |                         | rsaEncryption signature         |
+   |       |                         | identifier                      |
+   |       |                         | (1.2.840.113549.1.1.1, NULL     |
+   |       |                         | parameters) that many CMS       |
+   |       |                         | libraries generate, so          |
+   |       |                         | receivers MUST also accept      |
+   |       |                         | rsaEncryption as the            |
+   |       |                         | SignerInfo signatureAlgorithm   |
+   |       |                         | for RS256.                      |
+   +-------+-------------------------+---------------------------------+
+   | ES256 | ecdsa-with-SHA256       | ECDSA using the P-256 curve     |
+   |       | 1.2.840.10045.4.3.2     | and SHA-256 under the CMS       |
+   |       |                         | conventions of [RFC5754].       |
+   |       |                         | AlgorithmIdentifier parameters  |
+   |       |                         | MUST be absent.  The CMS        |
+   |       |                         | signature value is the DER      |
+   |       |                         | ECDSA-Sig-Value                 |
+   |       |                         | representation; it is not the   |
+   |       |                         | JOSE raw R || S                 |
+   |       |                         | representation.                 |
+   +-------+-------------------------+---------------------------------+
+   | PS256 | id-RSASSA-PSS           | RSASSA-PSS under [RFC4056]      |
+   |       | 1.2.840.113549.1.1.10   | with SHA-256, MGF1 with SHA-    |
+   |       |                         | 256, salt length 32 octets,     |
+   |       |                         | and trailerField 1.  The        |
+   |       |                         | AlgorithmIdentifier parameters  |
+   |       |                         | MUST encode those choices.      |
+   +-------+-------------------------+---------------------------------+
+
+                                  Table 2
+
+   For all three mappings, SignerInfo digestAlgorithm and the SignedData
+   digestAlgorithms set MUST identify SHA-256.
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 14]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+4.4.  Registrar Binding JWS
+
+   A Registrar-bound Mode-1 message carries a compact JWS in bind.  Its
+   payload is a JWT [RFC7519] with the following claims:
+
+   iss  REQUIRED.  The Registrar OAuth issuer URI.
+
+   sub  REQUIRED.  The same canonical aid carried by the Hardware-
+      Attestation header.
+
+   iat  REQUIRED.  Binding-assertion issuance time.  A verifier MUST
+      reject a value materially in the future.
+
+   exp  REQUIRED.  Expiration time, which MUST be later than iat.  A
+      verifier MUST NOT accept an expired binding assertion, subject
+      only to normal small clock-skew allowance.
+
+   cnf  REQUIRED.  A confirmation object [RFC7800] containing jwk for
+      the exact public key in the CMS signer certificate.
+
+   aid  REQUIRED.  The Registry-defined AIRS claim object.  Its
+      trust_tier member reports the tier of this enrolled proof binding.
+      Email does not redefine the tier values.
+
+   The binding JWT is a JWS using compact serialization [RFC7515].  Its
+   protected header MUST contain alg, kid, and typ.  The typ value MUST
+   be airs-email-binding+jwt, denoting application/airs-email-
+   binding+jwt as registered by Section 11.4; verifiers MUST reject
+   another type.  This explicit profile separation follows the cross-JWT
+   confusion guidance of [RFC8725].  alg MUST select an asymmetric
+   digital-signature algorithm acceptable for the selected public key;
+   none and symmetric-MAC algorithms MUST NOT be accepted.  The verifier
+   resolves the header aid, obtains currentIssuer, and performs
+   Section 3.3.  The JWS iss MUST exactly equal currentIssuer; the kid
+   MUST select a signing-capable public key in that issuer's
+   authenticated JWK Set; the selected key and alg MUST satisfy the
+   algorithm-validation requirements of [RFC8725]; the JWS signature
+   MUST verify; iat and exp MUST satisfy the time requirements above;
+   and sub MUST equal the header aid.  To compare cnf.jwk with the CMS
+   signer public key, the verifier converts the signer public key to its
+   public JWK representation and requires equal JWK thumbprints as
+   defined by [RFC7638].  The cnf.jwk value MUST NOT contain private key
+   parameters.  Finally, aid.trust_tier MUST correspond to typ according
+   to Section 3.2.
+
+   The binding JWS is not the email message signature.  It is reusable
+   until expiration; possession of it does not let an attacker send a
+   valid message because the CMS signature still requires the enrolled
+
+
+
+Drake                     Expires 28 April 2027                [Page 15]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   operational proof private key.  Registrars SHOULD keep its lifetime
+   short enough that retirement or compromise of a proof binding does
+   not leave a long-lived stale assertion, and receivers MAY impose a
+   local maximum assertion age in addition to enforcing exp.  Expiration
+   determines whether the Registrar binding is currently acceptable; it
+   does not retroactively alter the cryptographic integrity of a stored
+   email.  A verifier that finds the assertion expired reports policy,
+   with the cause in the comment, not fail: the CMS signature verified,
+   and the Registrar's assertion was no longer current when checked.
+   Registrars that issue binding assertions for mail SHOULD choose a
+   lifetime long enough for ordinary queueing and greylisting retries;
+   the examples use one hour, whereas the five minutes that is the
+   Registry's baseline for interactive access tokens is not a mail
+   requirement.  A trusted receiving system can preserve a receipt-time
+   verification result in Authentication-Results, optionally protected
+   by ARC, when later archival processing needs to distinguish those two
+   questions.
+
+4.5.  Verification Algorithm
+
+   A verifier processes Hardware-Attestation as follows:
+
+   1.  Require exactly one Hardware-Attestation field and no more than
+       one instance of each always-covered field listed for h in
+       Section 4.2.  Reject duplicates, unsupported versions, malformed
+       encodings, an aid without bind, or a bind without aid as
+       permerror.
+
+   2.  Verify that h covers the required fields; reconstruct h-hash;
+       recompute the canonical body hash and require exact equality with
+       bh.
+
+   3.  Apply local freshness policy to ts.  A stale but otherwise
+       cryptographically valid proof is a policy outcome, not a forged
+       signature.  The first trusted receiving MTA SHOULD record its
+       decision in Authentication-Results for later use.
+
+   4.  Decode SignedData, require the detached-CMS profile of
+       Section 4.2, supply the exact attestation-input as external
+       content, and verify the CMS signature with the signer certificate
+       public key.
+
+   5.  If the verifier evaluates a manufacturer-rooted result, validate
+       the signer key's manufacturer/attestation evidence under its
+       current accepted-root policy.  The evidence MUST directly
+       establish the relationship to the same signer public key and MUST
+       be consistent with typ.  Failure is fail.
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 16]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   6.  If aid is present, verify the Registrar binding JWS exactly as
+       specified in Section 4.4.  If the AIRS identity has no current
+       issuer, the issuer differs, or the assertion no longer validates,
+       AIRS identity verification fails even if the CMS message
+       signature itself is valid.
+
+   7.  Record which trust path(s) succeeded.  Report pass only if at
+       least one path succeeded and every path the verifier evaluated
+       succeeded; a valid CMS signature with no successful path (for
+       example a self-signed signer certificate with no bind and no
+       accepted manufacturer evidence) is reported as policy, because
+       nothing has established the property that typ claims.  A
+       manufacturer-only result MUST NOT report an authenticated aid.  A
+       Registrar-bound result MAY report the verified aid and asserted
+       trust tier.  The verifier then applies its own authorization,
+       reputation, and mail policy.
+
+4.6.  Authentication-Results Integration
+
+   Authentication-Results: mx.example.com;
+     hw-attest=pass
+       header.typ=TPM
+       header.alg=PS256
+       header.path=registrar
+       header.tier=sovereign
+       header.aid="urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg"
+
+   The hw-attest method and its result names/properties are registered
+   by Section 11.  tier and aid are reported only when Registrar binding
+   verification succeeded.  path reports which path succeeded:
+   manufacturer, registrar, or both.
+
+5.  Mode 2: SD-JWT Trust Proof
+
+   Mode 2 carries a per-message SD-JWT [RFC9901] signed by a Registrar.
+   It allows a sender to disclose the AIRS trust tier while withholding
+   the canonical identity when receiver policy does not require
+   continuity.
+
+5.1.  Trust Semantics
+
+   The Registrar has already verified the enrollment evidence for the
+   active binding and is the trust boundary for the asserted AIRS tier.
+   Recipients do not revalidate manufacturer chains in Mode 2.
+
+   If canonical sub is disclosed, the presentation is identified: the
+   verifier MUST resolve that aid, obtain currentIssuer, and require the
+   SD-JWT iss to equal it.  If sub is hidden, the verifier cannot
+
+
+
+Drake                     Expires 28 April 2027                [Page 17]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   perform that per-identity check.  It can only decide that it trusts
+   the visible issuer, under local policy, to make the disclosed
+   property assertion.  Hidden Mode 2 MUST NOT be described as proof of
+   current sponsorship, durable identity continuity, or an identity
+   reputation key.
+
+5.2.  Header Field and Claims
+
+   Hardware-Trust-Proof = "Hardware-Trust-Proof" ":"
+                          folded-sd-jwt CRLF
+
+   folded-sd-jwt        = 1*(sd-jwt-char / WSP / FWS)
+                              ; -> 1*sd-jwt-char
+   sd-jwt-char          = ALPHA / DIGIT / "-" / "_" / "." / "~"
+   ; FWS and WSP are as declared in the Mode 1 grammar.
+
+   The serialized Hardware-Trust-Proof value uses the same whitespace-
+   removal semantics as the DKIM b= and bh= tag values of [RFC6376] and
+   as the Mode-1 tag values of Section 4.2.  WSP and FWS MAY be inserted
+   at arbitrary positions solely to satisfy header-field line-length
+   requirements.  Such whitespace is not part of the SD-JWT
+   serialization and MUST be removed in its entirety before parsing the
+   resulting SD-JWT presentation according to [RFC9901].  RFC 5322
+   unfolding alone is not sufficient for this purpose because it removes
+   the folding CRLF but leaves the following WSP.  Therefore, whether a
+   parser receives the raw folded field or an already-unfolded field, it
+   MUST remove all such whitespace before SD-JWT parsing.  No Key
+   Binding JWT is used in ordinary Mode 2.  The Issuer-signed JWS
+   protected header MUST contain alg, kid, and typ; typ MUST be airs-
+   email+sd-jwt, denoting application/airs-email+sd-jwt as registered by
+   Section 11.4, and another type MUST be rejected.  The signing
+   algorithm MUST satisfy [RFC8725] and MUST be an asymmetric digital-
+   signature algorithm; none and symmetric-MAC algorithms MUST NOT be
+   accepted.  The Issuer-signed payload MUST contain iss, iat, nonce,
+   and the SD-JWT disclosure structures required by [RFC9901].  iss,
+   iat, and nonce MUST NOT be selectively disclosable because they are
+   required before or during verification.  exp is OPTIONAL; when
+   present it likewise MUST NOT be selectively disclosable, has normal
+   JWT semantics, and an expired token MUST NOT be accepted as currently
+   valid.
+
+   This profile reuses the Registry-defined aid claim object rather than
+   defining a second trust-tier claim.  The following values are
+   selectively disclosable:
+
+   aid.trust_tier  The Registry-defined tier of the binding the
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 18]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+      Registrar authenticated for this issuance.  Every Mode-2
+      presentation conforming to this specification MUST disclose this
+      member.
+
+   sub  The permanent canonical AIRS aid.  Disclosure changes
+      verification from hidden-identity to identified Mode 2.
+
+   In this profile the aid object contains only trust_tier.  An issuer
+   MUST NOT add handle, hardware_locked, or any other member to it, so
+   that a presentation which withholds sub discloses no unique or
+   identifying value.
+
+   Outside Combined mode the Issuer-signed payload MUST omit cnf.  For
+   Combined mode, it MUST instead contain a non-selectively-disclosable
+   cnf claim [RFC7800] whose jwk is the active operational proof public
+   key.  Combined-mode verification depends on that key, so it is
+   validity-critical in that profile and is deliberately not made a
+   selective disclosure.
+
+   Issuers MAY place other selectively disclosable claims in the SD-JWT,
+   but their semantics are outside this specification.  In particular
+   this document does not standardize operator contact data,
+   certifications, reputation, enrollment timestamps, credential counts,
+   or Registry lifecycle fields as email claims.
+
+5.3.  Message Binding via Issuer-Signed Nonce
+
+   The sender computes a message-binding nonce before requesting the
+   per-message SD-JWT:
+
+   message-binding = h-hash || bh-raw || ts-bytes
+   nonce = base64url(SHA-256(message-binding))
+
+   h-hash   = SHA-256(canonicalized-headers)  ; 32 bytes
+   bh-raw   = SHA-256(canonicalized body)     ; 32 bytes
+   ts-bytes = big-endian uint64(iat)          ; 8 bytes
+
+   The sender proposes iat; the Registrar MUST reject a proposed value
+   outside its configured clock-skew allowance.  The accepted value is
+   used both in the JWT and in ts-bytes.
+
+   h-hash uses the always-covered fields of Section 4.2, in the order
+   listed there (the same fields Mode 1 always covers).  Header
+   selection, including absent fields and repeated names, follows the
+   DKIM h= rules; selected fields use DKIM relaxed header
+   canonicalization and are each followed by CRLF.  Listing a field that
+   is absent at signing therefore also protects against later addition
+   of that field; duplicate singleton fields are rejected by
+
+
+
+Drake                     Expires 28 April 2027                [Page 19]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Section 5.4.  The exact ASCII string hardware-trust-proof: is
+   appended last with an empty value and no trailing CRLF.  bh-raw is
+   SHA-256 of DKIM simple body canonicalization.
+
+   The sender submits nonce and iat to the Registrar over an
+   authenticated channel.  The Registrar MUST authenticate an active
+   AIRS binding and MUST issue aid.trust_tier for the binding actually
+   used.  In Combined mode it MUST set cnf.jwk to the proof key of that
+   same binding.  It returns an SD-JWT and disclosures; the sender
+   chooses which optional disclosures to present.
+
+   The issuer signature authenticates every disclosed value through the
+   SD-JWT disclosure hashes, but the _choice of which optional
+   disclosures are included_ is not message-bound by this nonce
+   construction because the Hardware-Trust-Proof value is blank during
+   nonce computation.  This specification makes no stronger claim.
+   Combined mode provides an additional Mode-1 signature over the
+   complete Mode-2 header.
+
+5.4.  Verification Algorithm
+
+   1.  Require exactly one Hardware-Trust-Proof field and no more than
+       one instance of each always-covered field listed for h in
+       Section 4.2.  Reject duplicates as permerror.  Parse the SD-JWT
+       presentation and treat all unverified claims and disclosures as
+       untrusted input.
+
+   2.  If a canonical sub disclosure is present, use it only as a
+       candidate lookup key: resolve it, obtain currentIssuer, and
+       require the visible iss to equal that URI.  If there is no
+       current issuer, fail identified verification.  If sub is not
+       disclosed, require local policy to trust the visible iss before
+       using it for discovery.
+
+   3.  Perform Section 3.3 and verify the SD-JWT signature and
+       disclosures according to [RFC9901].  Require disclosure of
+       aid.trust_tier and accept its value only with the semantics
+       defined by the Registry specification.  If the verified Issuer-
+       signed payload contains cnf but the message has no Hardware-
+       Attestation field, reject the presentation rather than silently
+       degrading a Combined proof to standalone Mode 2.  If it contains
+       cnf, the verifier MUST also evaluate Mode 1 and report hw-
+       trust=pass only if hw-attest passed, the CMS signer public key
+       equals cnf.jwk, the canonical identifiers carried by both
+       artifacts (if both carry one) are equal, and, when the Mode-1
+       result is Registrar-bound, its tier equals aid.trust_tier;
+       otherwise it reports fail.
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 20]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   4.  Require iat and nonce.  Reject a materially future iat.  If exp
+       is present, enforce it according to [RFC7519]; delivery delay
+       does not make an expired JWT valid.  An expired token is reported
+       as policy, with the cause in the comment.
+
+   5.  Recompute the nonce exactly as defined in Section 5.3 and require
+       byte-for-byte equality.
+
+   6.  Apply receiver-local age/replay policy to iat.  A policy refusal
+       of an old but cryptographically valid proof is recorded as a
+       policy result rather than changing JWT expiration semantics.  An
+       exact replay of the same message can be detected by caching
+       issuer/nonce pairs, but SMTP retransmission policy is receiver-
+       specific.
+
+   7.  If sub was disclosed, verify its disclosure digest and require it
+       to be the same canonical identifier used for authoritative issuer
+       resolution.  Report an identified result.  Otherwise report a
+       hidden-identity issuer property result and do not create a
+       durable identity key from it.
+
+5.5.  Authentication-Results Integration
+
+   Authentication-Results: mx.example.com;
+     hw-trust=pass
+       header.mode=identified
+       header.tier=sovereign
+       header.issuer="https://registrar.example/agents"
+       header.aid="urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg"
+
+   For hidden-identity Mode 2, header.mode=hidden is recorded and
+   header.aid is absent.  The method's registered result names and
+   properties are defined in Section 11.
+
+6.  Combined Mode
+
+   A message MAY carry both Hardware-Attestation and Hardware-Trust-
+   Proof, but a verifier MUST reject more than one instance of either
+   field.  Combined mode is meaningful only when the verifier
+   establishes that the two artifacts concern the same message and the
+   same Mode-1 signing key.  When a Registrar-backed AIRS identity is
+   claimed, that key is the enrolled operational proof key identified by
+   the Registrar assertion.
+
+   The Mode-1 h list MUST include Hardware-Trust-Proof so the CMS
+   signature covers the complete SD-JWT presentation, including the
+   sender's disclosure selection.  The Combined-mode SD-JWT MUST contain
+   the non-selective cnf.jwk required by Section 5.2; the verifier MUST
+
+
+
+Drake                     Expires 28 April 2027                [Page 21]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   require it to equal the CMS signer public key.  If Mode 1 carries
+   aid, Mode 2 MUST also disclose sub and the two canonical identifiers
+   MUST be equal.
+
+   Combined mode is not automatically independent defense in depth.  If
+   Mode 1 is Registrar-bound and Mode 2 is issued by the same Registrar,
+   a compromise of that Registrar affects both assertions.  Independence
+   exists only for properties established by a genuinely independent
+   manufacturer- rooted Mode-1 path.
+
+7.  Interaction with Existing Email Authentication
+
+   The mechanisms in this document complement rather than replace
+   existing email authentication.
+
+   SPF [RFC7208]  Authenticates sending infrastructure authorization for
+      a domain; orthogonal to AIRS actor attestation.
+
+   DKIM [RFC6376]  Authenticates a domain's signature.  A DKIM signer
+      that receives an already-attested message SHOULD include Hardware-
+      Attestation and Hardware-Trust-Proof in its h= coverage so removal
+      is detectable at the domain layer.
+
+   DMARC [RFC9989]  Evaluates domain alignment and policy.
+      Incorporating AIRS results into DMARC policy is outside this
+      specification.
+
+   ARC [RFC8617]  Can preserve a trusted intermediary's Authentication-
+      Results through forwarding.  This is particularly useful when a
+      later verifier cannot reproduce the original receipt-time issuer/
+      freshness decision.
+
+   S/MIME [RFC8551] and OpenPGP/MIME [RFC3156]  Protect message content
+      and/or sender credentials at different layers and can coexist with
+      these headers.
+
+7.1.  Forwarding and Message Modification
+
+   Changes to a covered header or canonicalized body invalidate the
+   originating attestation just as comparable changes can invalidate
+   DKIM.  A forwarder MAY record the original successful verification in
+   Authentication-Results and protect that result with ARC.  It MUST NOT
+   construct a new passing AIRS result unless it independently performs
+   the verification defined here.
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 22]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+7.2.  Human-Readable Display Names
+
+   A canonical aid is not intended as a mailbox display name.  MUAs MAY
+   obtain a handle or other display attribute from a separate naming or
+   credential layer, but long-lived identity/reputation state MUST
+   remain keyed to the canonical identifier when identity continuity is
+   required.
+
+   A passing result authenticates the bytes of the covered From field
+   and the actor and key behind the signature.  It does not show that
+   the actor may use that mailbox, domain, brand, or display name, which
+   remain the business of DMARC, submission account policy, and
+   trademark law.  A mail client MUST NOT present a passing result as an
+   endorsement of the From address or display name, and SHOULD show the
+   verified identity or property apart from the sender's address, next
+   to the separate SPF, DKIM, and DMARC results.  A deployment that
+   wants mailbox authority can use an independently issued credential
+   keyed by the canonical identifier; this document defines none.
+
+8.  Message Submission Requirements
+
+   An attestation-aware Message Submission Agent (MSA) provides an early
+   verification point but is not the authority that defines identity0 or
+   hardware tier.  An MSA that claims to validate these headers MUST run
+   the same Mode-1 or Mode-2 verification required of a receiver.
+
+8.1.  Identity and Account Policy
+
+   If local submission policy restricts which canonical AIRS identities
+   an authenticated account may use, the MSA MUST compare that policy
+   only after the aid has been cryptographically authenticated by
+   Registrar-bound Mode 1 or identified Mode 2.  SMTP authentication or
+   an account database MUST NOT substitute for the AIRS issuer-binding
+   checks in this specification.  A mismatch MAY be rejected with an
+   appropriate 5.7.x policy response.
+
+8.2.  Proof-Key Control
+
+   Successful Mode-1 verification already proves control of the CMS
+   signer key.  An MSA MAY additionally bind that verified key or
+   canonical aid to local account policy.  Such local policy does not
+   alter the Registry anchor fingerprint or create a new AIRS identity
+   binding.
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 23]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+8.3.  Messages Without Attestation
+
+   Whether an account is required to submit either header is local
+   policy.  Absence of these headers is not an authentication failure
+   defined by this protocol.
+
+8.4.  Duplicate Header Rejection
+
+   A submitted message MUST NOT contain more than one instance of either
+   Hardware-Attestation or Hardware-Trust-Proof.  An MSA that validates
+   this protocol MUST reject duplicates before adding its own DKIM
+   signature.
+
+8.5.  Freshness at Submission
+
+   An MSA SHOULD apply a strict local freshness policy to Mode-1 ts and
+   Mode-2 iat because submission occurs close to proof generation.  This
+   check is local policy and does not change the JWT exp semantics
+   defined by [RFC7519].
+
+9.  Interoperability Considerations
+
+9.1.  Backward Compatibility
+
+   This specification introduces new email headers that are ignored by
+   mail servers that do not implement it.  Messages carrying Hardware-
+   Attestation or Hardware-Trust-Proof headers are fully compatible with
+   legacy mail infrastructure: the headers are simply unrecognized and
+   have no effect on delivery.  This ensures that deployment can proceed
+   incrementally without disrupting existing email flows.
+
+9.2.  DKIM Coverage of Attestation Headers
+
+   Because the sending agent adds the Hardware-Attestation and Hardware-
+   Trust-Proof headers before submitting the message to the MSA, DKIM
+   signing (which occurs at the MSA or a downstream MTA) naturally
+   occurs after these headers are present.  The DKIM signer SHOULD
+   include Hardware-Attestation and Hardware-Trust-Proof in the DKIM-
+   Signature h= tag so that the DKIM signature protects the attestation
+   evidence against modification in transit.  This allows a verifier to
+   confirm that the domain owner's mail infrastructure accepted the
+   attestation header as submitted by the agent.
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 24]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+9.3.  Finalize Before Signing
+
+   Message Submission [RFC6409] allows an MSA to add or complete Date,
+   Message-ID, and Sender and to apply content-transfer encoding.  A
+   change to a covered field or to the body invalidates the proof,
+   exactly as it would a DKIM signature.  A sender therefore sets its
+   own Date and Message-ID, uses a content-transfer encoding that no
+   relay needs to change (7bit, quoted-printable, or base64, not 8bit or
+   binary), and computes the covered hashes and any Mode-2 nonce only
+   after the message is in its final form.  An MSA that validates these
+   headers SHOULD NOT modify a covered field; if it must, the sender
+   needs to resubmit with the field completed.  The proof promises no
+   immunity from later mutation: a changed message fails verification,
+   and a trusted receiver can preserve its own result as described in
+   Section 4.4.
+
+9.4.  Relationship to DKIM and DKIM2 Tag Syntax
+
+   The two header fields defined here deliberately reuse the tag-spec
+   layout of [RFC6376] Section 3.2, which [I-D.ietf-dkim-dkim2-spec]
+   also carries forward.  An implementation can therefore share one
+   tokenizer across DKIM-Signature, DKIM2 header fields, and these
+   fields: split on ";", split each tag on the first "=", and trim
+   surrounding folding whitespace.
+
+   Four differences from a generic DKIM tag-list are intentional and
+   have to be honored:
+
+   *  Tag order is fixed by Section 4.2 rather than free, because the
+      Mode-1 signature is computed over a reconstruction of the field in
+      that order.
+
+   *  No extension tags are defined, and an unrecognized tag is a
+      malformed field rather than something to ignore.  A DKIM verifier
+      may ignore tags it does not know because DKIM signs a
+      canonicalized copy of the field with the b= value blanked; here an
+      unknown tag would change a signed input the verifier cannot
+      reproduce.
+
+   *  Internal whitespace is ignored in _every_ tag value, not only in
+      the base64 values (generators fold only within the multi-character
+      h, bh, ts, chain, aid, and bind values).  DKIM states that rule
+      only for b= and bh=, and its h= grammar permits folding whitespace
+      only around the ":" separators.  In practice, deployed signers
+      fold h= in mid-token, so this specification permits folding at any
+      point in a value and requires verifiers to strip it.
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 25]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   *  The bh value is unpadded base64url ([RFC4648], Section 5), not the
+      base64 of the DKIM bh= tag.  A shared tag tokenizer can be reused;
+      a shared bh decoder cannot.
+
+   A trailing semicolon after the final tag is accepted but not
+   required.  DKIM2 has moved toward requiring one on its own header
+   fields; accepting both forms here keeps a shared generator usable
+   without constraining which convention a deployment follows.
+
+9.5.  Header Size Considerations
+
+   The base64-encoded CMS SignedData in Mode 1 can be several kilobytes
+   when manufacturer evidence includes certificate chains.
+   Implementations MUST honor the line-length requirements of [RFC5322]
+   and MUST use the DKIM-style whitespace semantics defined by
+   Section 4.2 and Section 5.2 when folding any value in these fields.
+   Deployments that impose aggregate header-size limits need to account
+   for the CMS object and, in Registrar-bound mode, the binding JWS.
+   This specification does not set a deployment-specific minimum header
+   budget.  A verifier SHOULD reject a field larger than its local limit
+   as permerror without decoding it.
+
+10.  Implementation Status
+
+   NOTE TO RFC EDITOR: Please remove this section before publication.
+
+   This section records the status of known implementations of this
+   specification and follows the guidance of [RFC7942].
+
+10.1.  1id.com Registrar and Sender Implementation
+
+   Organization: 1id.com (https://1id.com)
+
+   The 1id.com implementation supports both Mode 1 (Direct Hardware
+   Attestation) and Mode 2 (SD-JWT Trust Proof), including authoritative
+   AIRS currentIssuer resolution, RFC 8414 issuer metadata and JWKS
+   discovery, Registrar binding JWSs that bind the canonical aid to the
+   exact Mode-1 proof key, detached CMS verification over the 92-octet
+   attestation-input, per-message SD-JWT issuance, and Combined mode.
+   Supported AIRS mechanism mappings include TPM, PIV/YubiKey, hardware
+   enclave, virtual TPM, and software-managed proof keys.  On Windows,
+   enrollment and signing run without administrative privileges.  Every
+   tier, including the declared tier, obtains tokens by a challenge
+   signature from its enrolled key; the Registrar no longer accepts a
+   static client secret.  Every access token is sender-constrained to
+   that key, and the 1id.com and MailPal.com APIs accept a token only
+   with an HTTP Message Signature by it.  Apple Secure Enclave bindings
+   are enrolled on trust on first use.
+
+
+
+Drake                     Expires 28 April 2027                [Page 26]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Maturity: Production deployment at https://1id.com.
+
+   Published open-source components: the Python SDK "oneid" 4.0.0 on
+   PyPI (https://github.com/1id-com/oneid-sdk), the Node.js SDK "1id"
+   4.0.0 on npm (https://github.com/1id-com/oneid-node), the code-signed
+   hardware enrollment helper "oneid-enroll" 3.0.0
+   (https://github.com/1id-com/oneid-enroll), and the draft/test-vector
+   repository (https://github.com/1id-com/draft-drake-email-hardware-
+   attestation).
+
+10.2.  MailPal.com Verifier and Relay
+
+   Organization: 1id.com (https://mailpal.com)
+
+   MailPal.com implements receiving-side verification of Mode 1 and Mode
+   2, including AIRS identity/issuer binding checks and Authentication-
+   Results generation.  All five AIRS trust tiers are exercised by the
+   live messages in Appendix A.
+
+   Maturity: Production mail infrastructure and verifier deployment at
+   https://mailpal.com.
+
+   The open-source verification library and command-line tool is
+   https://github.com/1id-com/hw-attest-verify, published to PyPI as hw-
+   attest-verify.  Version 3.0.0 implements revision -03 of this
+   document: the Registrar-bound Mode 1 trust path (the manufacturer-
+   rooted path is reserved, because this revision names no evidence
+   profile for it), identified and hidden-identity Mode 2, Combined
+   mode, and the pass, fail, policy, temperror, and permerror results.
+   It rejects an RDAP answer whose canonical identifier differs from the
+   one requested or whose identity is not operational, and it quotes
+   property values that are not MIME tokens.  It resolves aid values
+   through the configured interim RDAP base https://airs.1id.biz
+   permitted by [I-D.drake-agent-identity-resolution], because the
+   aid.urn.arpa delegation does not yet exist.
+
+11.  IANA Considerations
+
+11.1.  Message Header Fields
+
+   IANA is requested to add the following entries to the "Permanent
+   Message Header Field Names" registry [RFC3864]:
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 27]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   +====================+========+========+============+=====+=========+
+   |Header Field Name   |Template|Protocol|Status      |Trace|Reference|
+   +====================+========+========+============+=====+=========+
+   |Hardware-Attestation|        |mail    |experimental|no   |Section  |
+   |                    |        |        |            |     |4.2      |
+   +--------------------+--------+--------+------------+-----+---------+
+   |Hardware-Trust-Proof|        |mail    |experimental|no   |Section  |
+   |                    |        |        |            |     |5.2      |
+   +--------------------+--------+--------+------------+-----+---------+
+
+                                  Table 3
+
+11.2.  Email Authentication Methods and Properties
+
+   IANA is requested to register the following entries in the "Email
+   Authentication Methods" registry of [RFC8601].  Each entry has Status
+   active and Version 1.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 28]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   +======+============+======+========+================+======+=======+
+   |Method| Definition |ptype |Property| Value          |Status|Version|
+   +======+============+======+========+================+======+=======+
+   |hw-   | Section    |header|typ     | TPM / PIV /    |active|1      |
+   |attest| 4.6        |      |        | ENC / VRT /    |      |       |
+   |      |            |      |        | SFT            |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|alg     | RS256 /        |active|1      |
+   |attest| 4.6        |      |        | ES256 /        |      |       |
+   |      |            |      |        | PS256          |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|path    | manufacturer   |active|1      |
+   |attest| 4.6        |      |        | / registrar    |      |       |
+   |      |            |      |        | / both         |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|tier    | verified       |active|1      |
+   |attest| 4.6        |      |        | Registrar-     |      |       |
+   |      |            |      |        | asserted       |      |       |
+   |      |            |      |        | AIRS tier      |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|aid     | verified       |active|1      |
+   |attest| 4.6        |      |        | canonical      |      |       |
+   |      |            |      |        | AIRS           |      |       |
+   |      |            |      |        | identifier     |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|mode    | identified /   |active|1      |
+   |trust | 5.5        |      |        | hidden         |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|tier    | disclosed      |active|1      |
+   |trust | 5.5        |      |        | AIRS tier      |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|issuer  | verified       |active|1      |
+   |trust | 5.5        |      |        | issuer URI     |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+   |hw-   | Section    |header|aid     | verified       |active|1      |
+   |trust | 5.5        |      |        | canonical      |      |       |
+   |      |            |      |        | AIRS           |      |       |
+   |      |            |      |        | identifier,    |      |       |
+   |      |            |      |        | if disclosed   |      |       |
+   +------+------------+------+--------+----------------+------+-------+
+
+                                  Table 4
+
+11.3.  Email Authentication Result Names
+
+   IANA is requested to register the following entries in the "Email
+   Authentication Result Names" registry:
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 29]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+          +================+===========+===============+========+
+          | Auth Method(s) | Code      | Specification | Status |
+          +================+===========+===============+========+
+          | hw-attest      | pass      | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-attest      | fail      | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-attest      | none      | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-attest      | temperror | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-attest      | permerror | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-attest      | policy    | Section 4.5   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | pass      | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | fail      | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | none      | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | temperror | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | permerror | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+          | hw-trust       | policy    | Section 5.4   | active |
+          +----------------+-----------+---------------+--------+
+
+                                  Table 5
+
+   For both methods, pass means the required cryptographic checks and
+   receiver trust/freshness policy succeeded; fail means a required
+   cryptographic, message-binding, chain, or identity-binding check
+   failed; none means the corresponding header field was absent;
+   temperror means verification could not complete because of a
+   transient external error; permerror means the field was malformed,
+   unsupported, or otherwise permanently unverifiable; and policy means
+   the cryptographic proof was valid but receiver policy declined it,
+   for example because a proof was too old, a Registrar assertion had
+   expired, or an issuer/root was not locally trusted.
+
+11.4.  Media Types for Explicit JWT Typing
+
+   To prevent cross-JWT confusion, IANA is requested to register the
+   following media types in the Standards Tree according to [RFC6838].
+   The shortened subtype values are used in the JWS typ protected header
+   as specified above.
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 30]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+11.4.1.  application/airs-email-binding+jwt
+
+   Type name  application
+
+   Subtype name  airs-email-binding+jwt
+
+   Required parameters  none
+
+   Optional parameters  none
+
+   Encoding considerations  binary; encoded as a compact JWT using
+      base64url components separated by period characters.
+
+   Security considerations  See Section 12, [RFC7519], and [RFC8725].
+
+   Interoperability considerations  none
+
+   Published specification  This document, Section 4.4.
+
+   Applications that use this media type  Registrar binding assertions
+      for AIRS Email Mode 1.
+
+   Fragment identifier considerations  none
+
+   Additional information  Magic number(s): none; File extension(s):
+      none; Macintosh file type code(s): none.
+
+   Person & email address to contact for further information
+      Christopher Drake, cnd@1id.com
+
+   Intended usage  COMMON
+
+   Restrictions on usage  none
+
+   Author  Christopher Drake
+
+   Change controller  IETF
+
+11.4.2.  application/airs-email+sd-jwt
+
+   Type name  application
+
+   Subtype name  airs-email+sd-jwt
+
+   Required parameters  none
+
+   Optional parameters  none
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 31]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Encoding considerations  binary; encoded as an SD-JWT according to
+      [RFC9901].
+
+   Security considerations  See Section 12, [RFC9901], and [RFC8725].
+
+   Interoperability considerations  none
+
+   Published specification  This document, Section 5.2.
+
+   Applications that use this media type  AIRS Email Mode-2 selective
+      trust proofs.
+
+   Fragment identifier considerations  none
+
+   Additional information  Magic number(s): none; File extension(s):
+      none; Macintosh file type code(s): none.
+
+   Person & email address to contact for further information
+      Christopher Drake, cnd@1id.com
+
+   Intended usage  COMMON
+
+   Restrictions on usage  none
+
+   Author  Christopher Drake
+
+   Change controller  IETF
+
+11.5.  No Separate Hardware-Type, DNS, or URN Registration
+
+   The Mode-1 typ values are fixed application mappings to the Registry
+   specification and this document does not create a second extensible
+   hardware taxonomy.  Registrar keys are discovered through
+   authoritative AIRS resolution and RFC 8414 rather than an underscored
+   DNS node.  The aid URN namespace is registered solely by
+   [I-D.drake-agent-identity-registry].  No additional IANA action is
+   requested for those items by this document.
+
+12.  Security Considerations
+
+   The reasons for the boundaries of this document (trust is chosen,
+   higher layers stay above, Relying Parties own policy) are set out in
+   the Boundary Principles of
+   [I-D.drake-agent-identity-problem-statement].
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 32]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+12.1.  Message Binding and Replay
+
+   Both modes bind selected headers, the canonicalized body, and a
+   sender time value into a cryptographic proof.  An artifact copied to
+   different content therefore fails.  Replaying the exact same message
+   does not forge different content; the covered To field is a header,
+   not the SMTP envelope recipient, so the same signed message can reach
+   other recipients (for example Bcc recipients, list members, or a copy
+   that was captured and resent), and the proof binds no recipient and
+   makes no claim about who should receive the message; receivers may
+   use Message-ID, issuer/nonce caches, and normal SMTP duplicate
+   handling as local replay policy.
+
+12.2.  Signing-Purpose Separation
+
+   A Mode-1 proof key signs an attestation-input that begins with the
+   fixed label of Section 4.2, and the same operational key is typically
+   also used for binding-proof authentication to its Registrar.  The
+   label is reserved for this use: an implementation that signs data
+   supplied by another party with a Mode-1 proof key MUST refuse data
+   that begins with it, so that a signature obtained in another protocol
+   cannot be presented as a Mode-1 signature over a message the key
+   holder never sent.
+
+12.3.  Identity Substitution
+
+   Merely placing an aid inside a header that the sender signs proves
+   only that the sender chose those bytes.  It does not prove that the
+   signing key is enrolled to that AIRS identity.  Mode 1 therefore
+   forbids aid without a verified Registrar binding JWS, and identified
+   Mode 2 requires authoritative resolution of currentIssuer.  Verifiers
+   MUST NOT skip those binding steps.
+
+12.4.  Registrar Trust Boundary
+
+   A Registrar-backed tier assertion is trusted because the Registrar
+   has performed the enrollment checks defined by the Registry
+   specification.  The RP normally does not redo manufacturer enrollment
+   evidence.  A malicious or compromised Registrar can therefore make
+   false assertions for identities it currently sponsors; accreditation,
+   audit, jurisdiction, and receiver-local issuer policy are meaningful
+   trust decisions, not ceremonial metadata.
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 33]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Authoritative issuer resolution limits that power to the current
+   Registrar for the disclosed identity.  A valid signature from some
+   other Registrar does not authorize it to speak for that aid.  After
+   suspension or de-accreditation, an identity with no currentIssuer
+   fails Registrar-backed email verification until actor-authorized
+   transfer establishes a new current Registrar.
+
+12.5.  Manufacturer and Attestation Root Trust
+
+   Manufacturer-rooted Mode 1 depends on the verifier's accepted root
+   and evidence policy.  Orderly root retirement and emergency security
+   distrust have different consequences in AIRS; see
+   [I-D.drake-agent-identity-registry].  Direct verifiers apply their
+   current accepted-root policy and MUST NOT interpret an old or
+   compromised manufacturer chain as current hardware assurance merely
+   because the CMS message signature is mathematically valid.
+
+12.6.  Binding and Key Compromise
+
+   Hardware binding does not prevent a compromised agent from sending
+   bad mail as itself.  It limits key extraction/cloning according to
+   the properties of the enrolled mechanism and preserves attribution to
+   the key that acted.  A compromised Mode-1 signing key can produce
+   valid signatures.  In the Registrar-bound profile, that remains true
+   until its AIRS binding is disabled or other policy rejects it.
+   Registrar binding JWSs are therefore time-bounded with exp and MUST
+   be refreshed.  A binding disabled or distrusted before an already
+   issued JWS expires can leave a residual acceptance window;
+   deployments that require rapid invalidation MUST use suitably short
+   binding-JWS lifetimes and current issuer/trust policy.  Mode 2
+   issuance MUST authenticate a currently valid, assurance-qualified
+   binding before asserting its tier.
+
+12.7.  Combined-Mode Dependence
+
+   Two signatures are not automatically two independent trust anchors.
+   Registrar-bound Mode 1 and Mode 2 may both depend on the same
+   Registrar, so compromise of that Registrar can affect both.  A
+   manufacturer-rooted Mode-1 path can add independent evidence when it
+   authenticates the same operational proof key and Combined mode
+   enforces Section 6.
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 34]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+12.8.  Endpoint Compromise
+
+   Malware controlling an authorized agent can ask its protected key to
+   sign malicious content without extracting that key.  This protocol
+   does not attest the model, operating system, browser, container,
+   prompt, operator intent, or message truthfulness.  Trust tier and
+   successful verification MUST NOT be treated as authorization or
+   reputation.
+
+12.9.  Header Stripping and Forwarding
+
+   An intermediary can remove these headers, causing loss of the signal
+   rather than creation of a false passing result.  DKIM coverage and
+   ARC can make removal or prior verification visible, subject to the
+   normal trust assumptions of those mechanisms.
+
+12.10.  Authentication-Results Trust Boundary
+
+   The Authentication-Results examples in this document report a
+   verifier's outcome; they are not self-authenticating evidence.
+   Consumers MUST apply the trust-boundary rules of [RFC8601] and MUST
+   NOT trust an Authentication-Results field merely because an external
+   sender supplied it.  A receiving ADMD should remove or otherwise
+   neutralize conflicting untrusted Authentication-Results fields
+   according to RFC 8601 before adding its own result.
+
+12.11.  Cryptographic Agility
+
+   Version 1 uses SHA-256 with RS256, PS256, or ES256 for Mode 1 and the
+   algorithms permitted by the Registrar's authenticated JWK Set for the
+   JWS and SD-JWT signatures.  Algorithm deprecation is independent of
+   identity0 continuity.  A future incompatible change to the Mode-1
+   hash/signature construction requires a new protocol version.
+
+13.  Privacy Considerations
+
+   The Problem Statement distinguishes autonomous agents from natural
+   persons while recognizing that machine identifiers can expose
+   information about human operators or customers.  This application
+   therefore separates durable identity disclosure from property
+   disclosure.
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 35]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+13.1.  Mode-1 Linkability
+
+   Mode 1 necessarily exposes the operational proof public key through
+   the CMS signer certificate.  Reuse of that key makes messages
+   linkable by its SPKI fingerprint.  Registrar-bound Mode 1
+   additionally exposes the canonical aid, deliberately enabling durable
+   actor continuity.  Manufacturer-rooted evidence may reveal
+   manufacturer, device-family, or device-unique values (for example a
+   serial number in a certificate), and the signer certificate carried
+   in SignedData is visible to every recipient, so anything it names,
+   including an AIRS identifier, is disclosed with the message.  A
+   Mode-1 signature is a public-key signature: any recipient can show
+   the signed message to others as evidence that the key signed it.
+   This document provides attribution to the key that acted, and no
+   deniability.  None of those values should be mistaken for human
+   identity.
+
+13.2.  Mode-2 Selective Disclosure
+
+   Standalone hidden-identity Mode 2 omits the canonical aid and cnf, so
+   the email proof contains no sender-selected persistent AIRS identity
+   or proof key.  The issuer URI, message-bound nonce, issuance time,
+   and disclosed properties remain visible and can themselves be
+   correlating signals.  Identified Mode 2 intentionally discloses the
+   canonical aid and is therefore linkable by design.  Combined mode
+   exposes cnf.jwk to bind Mode 2 to the Mode-1 signing key, so it
+   remains key-linkable even if sub is withheld.  Hidden-identity means
+   only that the authenticated canonical sub is withheld.  It does not
+   hide an identifier carried elsewhere in the message, including in a
+   Mode-1 signer certificate; a sender that wants a property-only
+   message uses standalone Mode 2, or a signer certificate that names no
+   identity.
+
+   The sender chooses which optional SD-JWT disclosures to reveal.
+   Their values are issuer-authenticated, but this revision does not
+   claim that the disclosure _selection_ is message-bound except in
+   Combined mode, where the Mode-1 signature covers the complete
+   Hardware-Trust-Proof field.
+
+13.3.  Registrar Observation
+
+   Mode 2 requires a per-message issuance interaction, so the Registrar
+   can observe that the actor requested a proof and when.  The nonce is
+   a hash-derived message binding, not plaintext message content, but
+   traffic analysis can still reveal patterns.  Registrars SHOULD
+   minimize retained request metadata and follow their published privacy
+   and legal-retention policy.  This document does not invent a separate
+   central behavior log.
+
+
+
+Drake                     Expires 28 April 2027                [Page 36]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+13.4.  Data Minimization
+
+   Receivers SHOULD retain only the identity or property information
+   needed for their decision.  A canonical aid, proof-key fingerprint,
+   or manufacturer evidence can become a durable correlator and SHOULD
+   NOT be logged merely because the protocol made it available.
+
+13.5.  Human-Related Information
+
+   An agent may act for one or more people or organizations.  The AIRS
+   identity identifies the independently accountable actor, not each
+   human principal it serves.  Privacy partitioning SHOULD use Mode 2
+   selective disclosure, application aliases, or other higher-layer
+   credentials rather than minting multiple identity0s for the same
+   actor.  Separate AIRS identities are appropriate only when the
+   underlying actors are themselves independently accountable according
+   to the Problem Statement.
+
+14.  Normative References
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
+              Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
+              <https://www.rfc-editor.org/info/rfc4648>.
+
+   [RFC5652]  Housley, R., "Cryptographic Message Syntax (CMS)", STD 70,
+              RFC 5652, DOI 10.17487/RFC5652, September 2009,
+              <https://www.rfc-editor.org/info/rfc5652>.
+
+   [RFC4056]  Schaad, J., "Use of the RSASSA-PSS Signature Algorithm in
+              Cryptographic Message Syntax (CMS)", RFC 4056,
+              DOI 10.17487/RFC4056, June 2005,
+              <https://www.rfc-editor.org/info/rfc4056>.
+
+   [RFC3370]  Housley, R., "Cryptographic Message Syntax (CMS)
+              Algorithms", RFC 3370, DOI 10.17487/RFC3370, September
+              2002, <https://www.rfc-editor.org/info/rfc3370>.
+
+   [RFC5754]  Turner, S., "Using SHA2 Algorithms with Cryptographic
+              Message Syntax", RFC 5754, DOI 10.17487/RFC5754, January
+              2010, <https://www.rfc-editor.org/info/rfc5754>.
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 37]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   [RFC6376]  Crocker, D., Ed., Hansen, T., Ed., and M. Kucherawy, Ed.,
+              "DomainKeys Identified Mail (DKIM) Signatures", STD 76,
+              RFC 6376, DOI 10.17487/RFC6376, September 2011,
+              <https://www.rfc-editor.org/info/rfc6376>.
+
+   [RFC8141]  Saint-Andre, P. and J. Klensin, "Uniform Resource Names
+              (URNs)", RFC 8141, DOI 10.17487/RFC8141, April 2017,
+              <https://www.rfc-editor.org/info/rfc8141>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+   [RFC8601]  Kucherawy, M., "Message Header Field for Indicating
+              Message Authentication Status", RFC 8601,
+              DOI 10.17487/RFC8601, May 2019,
+              <https://www.rfc-editor.org/info/rfc8601>.
+
+   [RFC5322]  Resnick, P., Ed., "Internet Message Format", RFC 5322,
+              DOI 10.17487/RFC5322, October 2008,
+              <https://www.rfc-editor.org/info/rfc5322>.
+
+   [RFC5234]  Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
+              Specifications: ABNF", STD 68, RFC 5234,
+              DOI 10.17487/RFC5234, January 2008,
+              <https://www.rfc-editor.org/info/rfc5234>.
+
+   [RFC7405]  Kyzivat, P., "Case-Sensitive String Support in ABNF",
+              RFC 7405, DOI 10.17487/RFC7405, December 2014,
+              <https://www.rfc-editor.org/info/rfc7405>.
+
+   [RFC6838]  Freed, N., Klensin, J., and T. Hansen, "Media Type
+              Specifications and Registration Procedures", BCP 13,
+              RFC 6838, DOI 10.17487/RFC6838, January 2013,
+              <https://www.rfc-editor.org/info/rfc6838>.
+
+   [RFC8725]  Sheffer, Y., Hardt, D., and M. Jones, "JSON Web Token Best
+              Current Practices", BCP 225, RFC 8725,
+              DOI 10.17487/RFC8725, February 2020,
+              <https://www.rfc-editor.org/info/rfc8725>.
+
+   [RFC9901]  Fett, D., Yasuda, K., and B. Campbell, "Selective
+              Disclosure for JSON Web Tokens", RFC 9901,
+              DOI 10.17487/RFC9901, November 2025,
+              <https://www.rfc-editor.org/info/rfc9901>.
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 38]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   [RFC7515]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web
+              Signature (JWS)", RFC 7515, DOI 10.17487/RFC7515, May
+              2015, <https://www.rfc-editor.org/info/rfc7515>.
+
+   [RFC7519]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web Token
+              (JWT)", RFC 7519, DOI 10.17487/RFC7519, May 2015,
+              <https://www.rfc-editor.org/info/rfc7519>.
+
+   [RFC7638]  Jones, M. and N. Sakimura, "JSON Web Key (JWK)
+              Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
+              2015, <https://www.rfc-editor.org/info/rfc7638>.
+
+   [RFC7800]  Jones, M., Bradley, J., and H. Tschofenig, "Proof-of-
+              Possession Key Semantics for JSON Web Tokens (JWTs)",
+              RFC 7800, DOI 10.17487/RFC7800, April 2016,
+              <https://www.rfc-editor.org/info/rfc7800>.
+
+   [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
+              Authorization Server Metadata", RFC 8414,
+              DOI 10.17487/RFC8414, June 2018,
+              <https://www.rfc-editor.org/info/rfc8414>.
+
+   [I-D.drake-agent-identity-registry]
+              Drake, C., "Agent Identity Registry System: A Federated
+              Architecture for Durable Identity of Autonomous Entities",
+              Work in Progress, Internet-Draft, draft-drake-agent-
+              identity-registry-05, October 2026,
+              <https://datatracker.ietf.org/doc/draft-drake-agent-
+              identity-registry/>.
+
+   [I-D.drake-agent-identity-resolution]
+              Drake, C., "Resolution and Verification of Agent
+              Identities using DNS and RDAP", Work in Progress,
+              Internet-Draft, draft-drake-agent-identity-resolution-01,
+              October 2026, <https://datatracker.ietf.org/doc/draft-
+              drake-agent-identity-resolution/>.
+
+   [I-D.drake-agent-identity-problem-statement]
+              Drake, C., "Identity for Autonomous Agents and Robots:
+              Problem Statement, Threat Model, and Terminology", Work in
+              Progress, Internet-Draft, draft-drake-agent-identity-
+              problem-statement-01, October 2026,
+              <https://datatracker.ietf.org/doc/draft-drake-agent-
+              identity-problem-statement/>.
+
+   [I-D.ietf-dkim-dkim2-spec]
+              Clayton, R., "DomainKeys Identified Mail Signatures v2
+              (DKIM2)", Work in Progress, Internet-Draft, draft-ietf-
+
+
+
+Drake                     Expires 28 April 2027                [Page 39]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+              dkim-dkim2-spec-06, 28 August 2026,
+              <https://datatracker.ietf.org/doc/draft-ietf-dkim-
+              dkim2-spec/>.
+
+15.  Informative References
+
+   [RFC8792]  Watsen, K., Auerswald, E., Farrel, A., and Q. Wu,
+              "Handling Long Lines in Content of Internet-Drafts and
+              RFCs", RFC 8792, DOI 10.17487/RFC8792, June 2020,
+              <https://www.rfc-editor.org/info/rfc8792>.
+
+   [RFC3156]  Elkins, M., Del Torto, D., Levien, R., and T. Roessler,
+              "MIME Security with OpenPGP", RFC 3156,
+              DOI 10.17487/RFC3156, August 2001,
+              <https://www.rfc-editor.org/info/rfc3156>.
+
+   [RFC7208]  Kitterman, S., "Sender Policy Framework (SPF) for
+              Authorizing Use of Domains in Email, Version 1", RFC 7208,
+              DOI 10.17487/RFC7208, April 2014,
+              <https://www.rfc-editor.org/info/rfc7208>.
+
+   [RFC9989]  Herr, T., Ed. and J. Levine, Ed., "Domain-Based Message
+              Authentication, Reporting, and Conformance (DMARC)",
+              RFC 9989, DOI 10.17487/RFC9989, May 2026,
+              <https://www.rfc-editor.org/info/rfc9989>.
+
+   [RFC7942]  Sheffer, Y. and A. Farrel, "Improving Awareness of Running
+              Code: The Implementation Status Section", BCP 205,
+              RFC 7942, DOI 10.17487/RFC7942, July 2016,
+              <https://www.rfc-editor.org/info/rfc7942>.
+
+   [RFC8551]  Schaad, J., Ramsdell, B., and S. Turner, "Secure/
+              Multipurpose Internet Mail Extensions (S/MIME) Version 4.0
+              Message Specification", RFC 8551, DOI 10.17487/RFC8551,
+              April 2019, <https://www.rfc-editor.org/info/rfc8551>.
+
+   [RFC8617]  Andersen, K., Long, B., Ed., Blank, S., Ed., and M.
+              Kucherawy, Ed., "The Authenticated Received Chain (ARC)
+              Protocol", RFC 8617, DOI 10.17487/RFC8617, July 2019,
+              <https://www.rfc-editor.org/info/rfc8617>.
+
+   [RFC9334]  Birkholz, H., Thaler, D., Richardson, M., Smith, N., and
+              W. Pan, "Remote ATtestation procedureS (RATS)
+              Architecture", RFC 9334, DOI 10.17487/RFC9334, January
+              2023, <https://www.rfc-editor.org/info/rfc9334>.
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 40]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   [RFC3864]  Klyne, G., Nottingham, M., and J. Mogul, "Registration
+              Procedures for Message Header Fields", BCP 90, RFC 3864,
+              DOI 10.17487/RFC3864, September 2004,
+              <https://www.rfc-editor.org/info/rfc3864>.
+
+   [RFC6409]  Gellens, R. and J. Klensin, "Message Submission for Mail",
+              STD 72, RFC 6409, DOI 10.17487/RFC6409, November 2011,
+              <https://www.rfc-editor.org/info/rfc6409>.
+
+Appendix A.  Live Email Examples
+
+   This appendix contains five complete email messages, one per trust
+   tier.  Each was produced on 27 October 2026 with the published
+   reference implementation of this specification (the "oneid" 4.0.0
+   Python SDK and the "oneid-enroll" 3.0.0 hardware helper, running
+   without administrative privileges), submitted through the MailPal.com
+   submission service, verified and stamped by the receiving MailPal.com
+   verifier (the hw-attest and hw-trust Authentication-Results fields),
+   and copied from the receiving message store.
+
+   The messages are shown wrapped with the single-backslash strategy of
+   [RFC8792]: a line that ends in "\" continues on the next line, and
+   that line's leading spaces are not part of the content.  Unwrapping
+   restores the received messages exactly, except that TAB characters in
+   the folding whitespace of the Received and DKIM-Signature fields are
+   shown as spaces, as [RFC8792] requires.  Neither field is covered by
+   these signatures, and the header canonicalization of this document
+   treats TAB and SP alike.  Re-folding the two Hardware-* fields does
+   not change a signature, because whitespace in them is deleted before
+   hashing (Section 4.2); re-folding the body or any other covered field
+   would, because those use DKIM "simple" and relaxed canonicalization.
+
+   To verify an example, save it (starting with its "NOTE:" line),
+   unwrap it with the "rfcfold" script from Appendix A of [RFC8792], and
+   run the open-source verifier (https://github.com/1id-com/hw-attest-
+   verify, installed with "pip install hw-attest-verify", version 3.0.0
+   or later):
+
+   $ rfcfold -r -i example-wrapped.txt -o example.eml
+   $ python3 -m hw_attest_verify --auth-results --no-time-check \
+       --hostname mailpal.com < example.eml
+
+   Each example yields the same hw-attest=pass and hw-trust=pass results
+   as the Authentication-Results fields it carries.  No trust store is
+   needed: every example carries "aid" and "bind", so Mode 1 is verified
+   on the Registrar-bound path (Section 4.4), and every example
+   discloses "sub", so Mode 2 is identified.  The verifier resolves each
+   "aid" at the AIRS Registry and fetches the Registrar's [RFC8414]
+
+
+
+Drake                     Expires 28 April 2027                [Page 41]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   metadata and JWK Set (Section 3.3); it therefore needs network
+   access, and an example verifies only while its identity has a current
+   issuer.  The --no-time-check option skips the freshness and expiry
+   checks, because each SD-JWT and each Registrar binding JWS expires
+   one hour after issuance; the cryptographic and message-binding checks
+   do not depend on time.
+
+   Note on certificate chains: each Mode 1 SignedData carries the
+   certificate that the 1id.com Registrar issued for the enrolled proof
+   key, together with the Registrar's intermediate and root ("1ID
+   Intermediate CA A", "1ID Root CA A").  On the Registrar-bound path
+   that chain only conveys the proof key; its authority comes from the
+   binding JWS, whose "cnf.jwk" must equal the CMS signer key.  A
+   manufacturer-rooted deployment would instead carry the hardware
+   manufacturer's chain (Section 4.1).
+
+   Note on folding: the sender folded the Hardware-Attestation and
+   Hardware-Trust-Proof fields at about 78 characters, inside tag values
+   and inside the SD-JWT, rather than only at the ";" separators.  That
+   is legal because verifiers remove all such whitespace before
+   interpreting either value (Section 4.2, Section 9.4, Section 5.2).
+   Verifiers that unfold only per RFC 5322, or that allow folding only
+   at separators, will fail these examples.
+
+   Note on captures: the DKIM-Signature on each message was added by the
+   MailPal.com submission service, and its h= list does not cover the
+   two Hardware-* fields, so these captures do not demonstrate the DKIM
+   recommendation of this document.  The Authentication-Results fields
+   were stamped by the receiving MailPal.com verifier; their position in
+   the header block does not show where they were added.  The Received
+   field records the SMTP transaction, which can begin before the proof
+   is finalized, so ts and iat can differ from it by a few seconds in
+   either direction.  Each message was verified with --no-time-check, as
+   above, so the results are historical.  The captures were made by an
+   implementation of this revision, including its signed input
+   (Section 4.2), so a verifier that implements an earlier revision
+   rejects them.
+
+   NOTE TO RFC EDITOR: Please retain the examples but remove this note.
+   They are a non-normative aid to implementers and reviewers: complete,
+   independently verifiable messages demonstrating every trust tier in
+   Combined Mode.
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 42]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+A.1.  Example 1: Sovereign-Tier TPM (Combined Mode)
+
+   The sovereign tier: identity urn:aid:global:id-vwgkj-mhtjp-mfscq-
+   bdchb, sending as id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com from a
+   Windows 11 laptop with an Intel firmware TPM (PTT).  Mode 1 is an
+   RS256 signature made inside the TPM by the enrolled proof key, and
+   its Registrar binding asserts the sovereign tier; Mode 2 is the
+   Registrar's ES256 SD-JWT, disclosing aid.trust_tier and sub, with
+   "cnf.jwk" equal to the TPM key.
+
+   NOTE: '\' line wrapping per RFC 8792
+
+   Delivered-To: id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com
+   X-Spam-Status: No
+   Received: from [172.22.1.90] (unknown [110.143.72.26] (AS1221 \
+   Telstra Limited, AU))
+    (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+    by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF5FB753DF25;
+    Mon, 26 Oct 2026 18:22:35 +0000
+   Authentication-Results: mail.mailpal.com; none
+   Return-Path: <id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com>
+   DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+   c=relaxed/relaxed; r=y;
+    h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+   te
+    :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+    :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+    t=1793038955; x=1793902955; bh=sfKpzPv0zYTN2kTHYT45985YsZjzjrWZfoQS\
+   EgjSDuM=
+    ; b=P2ayO8cSKbCmBHtOng6x6Jn31humGXV+UuyHE+IVLdWtSL+A2CYLD3E43Z11kH8\
+   j+hwYbJk
+    IGYDFb5lcVNIEddvwXW+YUCGwwJPxMe3ybWbfBl8LudmU7PXR9xIUmVK50EkeimX4q0\
+   mKawI5e+
+    K5ak9yroJbw7uD/3Q3eiGKPFUzkBNFUEezJ0tJtWKcxKpTG55ybSBHGfSleiYYeh6K6\
+   +tg/mNIu
+    9/Jk6zOBfQX45rcSfPTJBANmWW48b3XBgCRPrZTstfzHEg6Vrrh6WYKUhuqRyFKhdE5\
+   3K17Er1O
+    a5hHDFKYyKXOpAuQmS5lX6QCoY/9A66ow0YA2cCey3wEQA==;
+   Authentication-Results: mailpal.com; hw-attest=pass header.typ=TPM \
+   header.alg=RS256 header.path=registrar header.tier=sovereign \
+   header.aid="urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb"
+   Authentication-Results: mailpal.com; hw-trust=pass \
+   header.mode=identified header.tier=sovereign \
+   header.issuer="https://1id.com/realms/agents" \
+   header.aid="urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb"
+   From: Sovereign Example Agent <id-vwgkj-mhtjp-mfscq-bdchb@mailpal.co\
+   m>
+   To: id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com
+
+
+
+Drake                     Expires 28 April 2027                [Page 43]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Subject: Example 1: sovereign-tier TPM (Combined Mode)
+   Date: Tue, 27 Oct 2026 04:22:27 +1000
+   Message-ID: <179303894721.9756.12186655996631591027@mailpal.com>
+   Content-Type: text/plain; charset="utf-8"
+   Content-Transfer-Encoding: quoted-printable
+   MIME-Version: 1.0
+   Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+   1lczI1Ni0x
+    IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+   b20vcmVhbG
+    1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk0OCwiZXhwIjoxNzkzMDQyNTQ4LCJub25jZ\
+   SI6ImxOUmx
+    4VVJ5dk1sMjBoOGgyUlFnV09TaVByYmlNUXpJZGtJem5BSXVLbVkiLCJfc2RfYWxnIj\
+   oic2hhLTI1
+    NiIsIl9zZCI6WyJzZjhNSTZ0TEszSEpfcV9SdkY3dTBJTWdZRm9XZE1BZEdvaG5WWlV\
+   jd2E4IiwiV
+    WY0Qm9samVjc2lrb0pNM0NONG5vWXltd0ZwVmpsdENpeWN1Y1VvT1EzYyJdLCJjbmYi\
+   OnsiandrIj
+    p7Imt0eSI6IlJTQSIsIm4iOiJ4dk5ta0hCeW81UXY2UXI4Yk9IR0VjVGN2X1JGZVMzV\
+   ENnOVBaOGR
+    HXzVlQm8xRDlCNHJJMjNXRmx5enJXN195Z0k0Nl9QQTFWOTNELThuWG94aTQxQ1oxXz\
+   JwWS1YZ1Jr
+    eXVzZHhnWXVMOHJHR2V0amFDOFVtWDNpeDNRdWtuN3ZXRTFkUWJwUThiRFNlWmlDU3N\
+   HSkk0dEVMc
+    kdDc2NBQ2dzNVJLR3haMXJNbncxLWF6N3RWUVNUd2lpd3NDeHhLLUltYi1pRHo0MDdq\
+   NkZ0WVM2NG
+    dsTTFPSGFrRHdrekpjdW5QM0ZVdzFrYW4zMnZwdER5bGllZXpCdExzTnhxTU5tTlhSN\
+   FJKY0pRZXB
+    aV3ZpUTBPRm43OFZ1S1ZIT0pNbk90d0FGRmRzV3RQY3k5VGJ6MmVrZjhSczFmUDcwUE\
+   V2NG9oemFv
+    eGgteUZDUFdYaHJQalEiLCJlIjoiQVFBQiJ9fX0.0SgnPcsAkdWOUvL422cPesFhzSf\
+   tuXhta_ILl
+    SeupSAZdyX-Sw_7FqJlwVsof9steiI_zrgNUNNAoag-YaogQA~WyJkcmp1LTQ5MGw3d\
+   zd3ZjZDSll
+    1TWp3IiwiYWlkIix7InRydXN0X3RpZXIiOiJzb3ZlcmVpZ24ifV0~WyJ1bUR2MWZ5TD\
+   RZdkxjLXBT
+    amNQVVdBIiwic3ViIiwidXJuOmFpZDpnbG9iYWw6aWQtdndna2otbWh0anAtbWZzY3E\
+   tYmRjaGIiX
+    Q~
+   X-1ID-Contact-Token: 3b3e1ea2
+   Hardware-Attestation: v=1;
+    typ=TPM;
+    alg=RS256;
+    h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+   ferences:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof:from:
+    to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+
+
+
+Drake                     Expires 28 April 2027                [Page 44]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   s:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof;
+    bh=sfKpzPv0zYTN2kTHYT45985YsZjzjrWZfoQSEgjSDuM;
+    ts=1793038951;
+    chain=MIIMJwYJKoZIhvcNAQcCoIIMGDCCDBQCAQExDTALBglghkgBZQMEAgEwCwYJK\
+   oZIhvcNAQc
+    BoIIKfjCCBAkwggLxoAMCAQICFEVJ2w8X4Z7Go18G8sDIbIeIxE9aMA0GCSqGSIb3DQ\
+   EBCwUAMC4x
+    DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+   2MTAyNjE4M
+    jEyMFoXDTI3MTAyNjE4MjEyMFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+   YWlkOmdsb2
+    JhbDppZC12d2drai1taHRqcC1tZnNjcS1iZGNoYjEjMCEGA1UEBRMaaWQtdndna2otb\
+   Wh0anAtbWZ
+    zY3EtYmRjaGIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDG82aQcHKjlC\
+   /pCvxs4cYR
+    xNy/9EV5LdMKD09nx0b/l4GjUP0HisjbdYWXLOtbv/KAjjr88DVX3cP7ydejGLjUJnX\
+   /alj5eBGTK
+    6x3GBi4vysYZ62NoLxSZfeLHdC6Sfu9YTV1BulDxsNJ5mIJKwYkji0QusYKxwAKCzlE\
+   obFnWsyfDX
+    5rPu1VBJPCKLCwLHEr4iZv6IPPjTuPoW1hLriCUzU4dqQPCTMly6c/cVTDWRqffa+m0\
+   PKWJ57MG0u
+    w3Gow2Y1dHhElwlB6lla+JDQ4WfvxW4pUc4kyc63AAUV2xa09zL1NvPZ6R/xGzV8/vQ\
+   8S/iiHNqjG
+    H7IUI9ZeGs+NAgMBAAGjgeUwgeIwNAYDVR0RBC0wK4YpdXJuOmFpZDpnbG9iYWw6aWQ\
+   tdndna2otb
+    Wh0anAtbWZzY3EtYmRjaGIwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYD\
+   VR0OBBYEFB
+    p+KFCVTFXMyZxo4ga3/6WIdfhpMB8GA1UdIwQYMBaAFGciwHngVXI2J7NEovNM34Bd3\
+   5auMBcGCis
+    GAQQBg9RfAQEECXNvdmVyZWlnbjAiBgorBgEEAYPUXwECBBQyMDI2LTEwLTI2VDE4Oj\
+   IxOjIwWjAP
+    BgorBgEEAYPUXwEDBAEAMA0GCSqGSIb3DQEBCwUAA4IBAQCMeg7C2a+yrblqVQw/TWl\
+   l7COdnTayt
+    1srTUi5Aoe+NjSFJIGzg3ML8ZOp8p28hcg8J8dh9BPnj2jrcYkyJMYD1XMEVR7p2HHp\
+   dKWldZKffM
+    fhRCxJqAbSQAA1nTQj6SbdeLEazbSsbyHmfev9/KNk6NL4+hfp6213wIRGpHFxBlaYJ\
+   TS5HCtk4g5
+    wA/lh0oxoIJUJzK/OMrmojAaj8zUxhgUmeq8GeqQtT0p9vzeumbtd3JpToSvVejvkwl\
+   GJGO1hr6KZ
+    3kj3r4yLRKYueeXtYrfacQbXTBJGJyZShNM/7Z3834OL5ooXrSL0VKiR6J/aV74nqrB\
+   hYD8WceNiU
+    XQXMIIDSDCCAjCgAwIBAgIUSEEYK28j6n6Vhr+w4PvDkiuyQbEwDQYJKoZIhvcNAQEL\
+   BQAwJjEMMA
+    oGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMB4XDTI2MDMxNDE0MTM0N\
+   1oXDTMxMDM
+    xMzE0MTM0N1owLjEMMAoGA1UECgwDMUlEMR4wHAYDVQQDDBUxSUQgSW50ZXJtZWRpYX\
+
+
+
+Drake                     Expires 28 April 2027                [Page 45]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   RlIENBIEEw
+    ggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC554xsVDRUJ3fMEQISK3ayhz2\
+   DTFpHDMvhB
+    P6MHqTt/116HDJNj+2qXJdAmVH8GdXzMwm/tt9nrGrx4Sd3vcdodwpUnF2DhVASZ8e2\
+   TiYYB9a4DL
+    uPc3lOw+lwVOqCQmUDBSneQffINU+87WofNtWZQV28Oxy2HFDfFhU/WkI91ayiI/ihH\
+   QvQTJpqqZP
+    AbYn+EjD+8AarBbHgKsyyDxW8oOmws82nYhn8eRdz7O3De2w9cpZouJMyWLxG9nwUSO\
+   xD3fc1+vbc
+    MeoRmBLRADx9RmhrHOiB2HFW579bsqdkzwQ10/SM5/SXmhSdwajxU/mnkGZCE/vcndt\
+   UzJ5B/twjA
+    gMBAAGjZjBkMBIGA1UdEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMB0GA1Ud\
+   DgQWBBRnIs
+    B54FVyNiezRKLzTN+AXd+WrjAfBgNVHSMEGDAWgBTDt+lZdcVf+UYPLzmblKpM+SXw8\
+   DANBgkqhki
+    G9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1CQPPH9XGzkJ+09iAhUkC3lLNK+hWMpBZ+S2H\
+   s8KVl4aMaZ
+    mD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCyMR43GAoCcAZyDsq9pyyfIfXbQO6+dPU0TffL\
+   +9HgY2qme8
+    XN/vsOqWY3gEvxihrW9inVc16EeDv1iRLcWUZe5o3uS7tZTdS6/bkSb1lu81t9nK8YZ\
+   62jxNY2SB9
+    acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzdjS/Sal1/RcATxrzjo8bn22feqeikJCaoq4lO\
+   K/kKBZfz9F
+    0BGNVH95AjChp25bliGYQXMzPbiQuUnm6zqMdIYJg/NtPzg6kujCCAyEwggIJoAMCAQ\
+   ICFGciMXFD
+    NUuITsmdETPo+lhP0nQPMA0GCSqGSIb3DQEBCwUAMCYxDDAKBgNVBAoMAzFJRDEWMBQ\
+   GA1UEAwwNM
+    UlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQxNDEzNDdaGA8yMDU2MDMwNjE0MTM0N1owJjEM\
+   MAoGA1UECg
+    wDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMIIBIjANBgkqhkiG9w0BAQEFAAOCA\
+   Q8AMIIBCgK
+    CAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7kXquhEmyoZBED9/BkyzDsld4o3IyFdxvafrD\
+   u4e5YDzGIx
+    jHgCvCvwUgbEZt6femOqSM91VPKMuBzMEq0rtHCz7J/vS/nsfw3/NqgFN+j+q1HyHHV\
+   x+L3W8wQPW
+    rVLqI2RUFPyU9oeZL6XKaaL0PNIwL2NxAKMuc5uQ/BUPNjDsh7I4M5gD6X9WR/4ZEnv\
+   Ud0slil8fJ
+    PLRjw6om2eq/kFl5pXW7mipdf2ufiYEIc1lEBtf34krCWM3PEvnl0Rs4eEirDirxx7P\
+   FP18GOgoNy
+    aQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcInRsTfdPQIDAQABo0UwQzASBgNVHRMBAf8ECD\
+   AGAQH/AgEB
+    MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUw7fpWXXFX/lGDy85m5SqTPkl8PAwDQY\
+   JKoZIhvcNA
+    QELBQADggEBAAhRXzslG92koaKTfGR2KPZvOP3sxZvHBemfwb4tICwaegZlNtHztqP7\
+   qcLqWfsHG0
+    Caob8e2rbjMjpPaMY81328kgl7goVPTEuq3Af5joZOArHfizgQl9r5RwT9G3y/AgDTn\
+   ZDF6uUKt5P
+    1u8PUd8t6dUANvIjMvqD6eV8ERioMu+BL7GpbDvy7smvmsCpy1isY0aSlh112LGboJu\
+
+
+
+Drake                     Expires 28 April 2027                [Page 46]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   eGSbiMx35w
+    MKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5iYcUEVptBZW0Ik83sLXJdVG6Z745awnOAQnkr\
+   iRwt2b0r/J
+    Rbmu7TQrzAv/K0PTXTuYf3DYxqCl04w8cpgEaPd5rWG4yYxggFvMIIBawIBATBGMC4x\
+   DDAKBgNVBA
+    oMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBAhRFSdsPF+GexqNfB\
+   vLAyGyHiMR
+    PWjALBglghkgBZQMEAgEwDQYJKoZIhvcNAQELBQAEggEAsuXbipKCEQu16+vqlg2UdO\
+   xXevR/irGt
+    SPSCw3JyuEKcwfsQX6rM3rkqNTb3Z7LvXyG8MZ4Dff/Ex1I6J8gciX2qlOE99MDNzqD\
+   2D86MSsQHi
+    tWWeIxbfbr/tq90kWuzq8MKTEJXTTMi6ZBBP6Z/wAmdGkkCdGbEAzdgYQJO1fjKt8Qm\
+   QZZkHrXVAE
+    nPszcmJWq6yUHCgm2IRj+nZFH68+rt+SLLrACWJFVjPRSGYRKK0p5P8IdxFfTIgaUrI\
+   yEsHa0yNto
+    iKHgJ9/FxpT3UfaCmQdDXDie3bHY+GZE9PhnwzRC6WfuL2bVNcevHd/8bd3+0NsQ1LW\
+   F2gN/GxAfQ
+    AA==;
+    aid=urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb;
+    bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+   lwIjoiYWly
+    cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+   1zL2FnZW50
+    cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLXZ3Z2tqLW1odGpwLW1mc2NxLWJkY2h\
+   iIiwiaWF0I
+    joxNzkzMDM4OTQ4LCJleHAiOjE3OTMwNDI1NDgsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+   UlNBIiwibi
+    I6Inh2Tm1rSEJ5bzVRdjZRcjhiT0hHRWNUY3ZfUkZlUzNUQ2c5UFo4ZEdfNWVCbzFEO\
+   UI0ckkyM1d
+    GbHl6clc3X3lnSTQ2X1BBMVY5M0QtOG5Yb3hpNDFDWjFfMnBZLVhnUmt5dXNkeGdZdU\
+   w4ckdHZXRq
+    YUM4VW1YM2l4M1F1a243dldFMWRRYnBROGJEU2VaaUNTc0dKSTR0RUxyR0NzY0FDZ3M\
+   1UktHeFoxc
+    k1udzEtYXo3dFZRU1R3aWl3c0N4eEstSW1iLWlEejQwN2o2RnRZUzY0Z2xNMU9IYWtE\
+   d2t6SmN1bl
+    AzRlV3MWthbjMydnB0RHlsaWVlekJ0THNOeHFNTm1OWFI0UkpjSlFlcFpXdmlRME9Gb\
+   jc4VnVLVkh
+    PSk1uT3R3QUZGZHNXdFBjeTlUYnoyZWtmOFJzMWZQNzBQRXY0b2h6YW94aC15RkNQV1\
+   hoclBqUSIs
+    ImUiOiJBUUFCIn19LCJhaWQiOnsidHJ1c3RfdGllciI6InNvdmVyZWlnbiJ9fQ.HXvD\
+   5qUNaVCmua
+    jnheKCe4dPNrc-C0zlKe37wftpGNMs91MdiUQOI_yU5MbgELhposgst0heEv5m1C5MD\
+   eZIZw
+
+   Hardware-attested email from the AIRS reference implementation.
+   Identity tier: sovereign
+
+          Figure 1: Example 1: Sovereign-Tier TPM (Combined Mode)
+
+
+
+Drake                     Expires 28 April 2027                [Page 47]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+A.2.  Example 2: Portable-Tier PIV/YubiKey (Combined Mode)
+
+   The portable tier: a YubiKey 5 (firmware 5.4.3) PIV key in slot 9a
+   (ECDSA P-256), passed through to a Windows 11 guest.  Mode 1 is an
+   ES256 signature made inside the YubiKey; Mode 2 discloses
+   aid.trust_tier "portable".
+
+   NOTE: '\' line wrapping per RFC 8792
+
+   Delivered-To: id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com
+   X-Spam-Status: No
+   Received: from [169.254.206.65] (unknown [110.143.72.26] (AS1221 \
+   Telstra Limited, AU))
+    (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+    by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF608253E125;
+    Mon, 26 Oct 2026 18:22:37 +0000
+   Authentication-Results: mail.mailpal.com; none
+   Return-Path: <id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com>
+   DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+   c=relaxed/relaxed; r=y;
+    h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+   te
+    :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+    :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+    t=1793038957; x=1793902957; bh=UpNv/u4NEGGV0VPACHjdNjyQfrzCqbgBATph\
+   JjFgGIs=
+    ; b=I6himCc+0EMdz0C3bZ011q3uFhBfMccwWExmrvsAq4aSpAWupkxcgQm/HoDm2VP\
+   kmxEq0ei
+    mYTqjng3+Pabgzo12ySH0x/6RrNBMZEg7BinMREhBmcqhg95PH18AxX3Z19EmHAdntB\
+   NaxJC/eR
+    Ve5HP0PP3W7/o+bFnSK60QlEJy0Chsr8Upwl/vrqxEcsJdWemWZtDvbtYG5PuhrrfBJ\
+   UmaTZy0U
+    q67+ansM3IcYHeoXM5pJMUDfoct6ytnWr1VQzKRDPkGQfyeyLt5D0OnffeZCVNIm2xz\
+   RfZQTcgY
+    Vu6hT14TdlwpDdbCLVLK/LImPTsxLzvbP4qQcyXBF+C9vQ==;
+   Authentication-Results: mailpal.com; hw-attest=pass header.typ=PIV \
+   header.alg=ES256 header.path=registrar header.tier=portable \
+   header.aid="urn:aid:global:id-csnxq-phcmb-pvcmm-xcdmb"
+   Authentication-Results: mailpal.com; hw-trust=pass \
+   header.mode=identified header.tier=portable header.issuer="https://1\
+   id.com/realms/agents" header.aid="urn:aid:global:id-csnxq-phcmb-pvcm\
+   m-xcdmb"
+   From: AIRS-example-portable <id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com>
+   To: id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com
+   Subject: Example 2: portable-tier PIV/YubiKey (Combined Mode)
+   Date: Tue, 27 Oct 2026 05:22:27 +1100
+   Message-ID: <179303894757.9288.17119535157055262523@mailpal.com>
+   Content-Type: text/plain; charset="utf-8"
+
+
+
+Drake                     Expires 28 April 2027                [Page 48]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Content-Transfer-Encoding: quoted-printable
+   MIME-Version: 1.0
+   Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+   1lczI1Ni0x
+    IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+   b20vcmVhbG
+    1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk1MiwiZXhwIjoxNzkzMDQyNTUyLCJub25jZ\
+   SI6ImtjYzZ
+    yOGNRMGpOaFNBOGY1aW9CTG12VnF6Vl8zbkR0S2FJSF9RSUsteHciLCJfc2RfYWxnIj\
+   oic2hhLTI1
+    NiIsIl9zZCI6WyJBYVA2RGQ1Q0YyNmtzNXpGOVExeG9qeFVWYXFpX25MeFNvUVFoeVd\
+   XMFMwIiwiW
+    Ut1Wk56UUdBeDFLVG93NzJSNDF5aTJZdXdMUmZSZXk5ZzJlX08wZWhsWSJdLCJjbmYi\
+   OnsiandrIj
+    p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoicEk4V2hxQ1lIdkFUdlJlOGFKR\
+   lh4Vm1fbjF
+    5enF2MVJQTzJNZHpfZm1xNCIsInkiOiJBdy1xd2YxZ2dhNzZ5cTJPY1EtTDBLLS1BbE\
+   5MYnB1TVRZ
+    VEZMLVNvMVFRIn19fQ.hhY3QBXmIQhEjn8dFeWOdEKgfbsvkR4i2AIjNBUba3p8ftxm\
+   f9hhYJZXAl
+    _OJHNc15EFrn2e5uG-wNmzX5EHsQ~WyJ2LTBhU1ZPVDA3ZGp5UV9EQ3I3SF9nIiwiYW\
+   lkIix7InRy
+    dXN0X3RpZXIiOiJwb3J0YWJsZSJ9XQ~WyJvQ1RJRlc3OEVEemFtSzFDOHV6dGhRIiwi\
+   c3ViIiwidX
+    JuOmFpZDpnbG9iYWw6aWQtY3NueHEtcGhjbWItcHZjbW0teGNkbWIiXQ~
+   X-1ID-Contact-Token: ea8ed697
+   Hardware-Attestation: v=1;
+    typ=PIV;
+    alg=ES256;
+    h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+   ferences:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof:from:
+    to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+   s:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof;
+    bh=UpNv_u4NEGGV0VPACHjdNjyQfrzCqbgBATphJjFgGIs;
+    ts=1793038953;
+    chain=MIIKmwYJKoZIhvcNAQcCoIIKjDCCCogCAQExDTALBglghkgBZQMEAgEwCwYJK\
+   oZIhvcNAQc
+    BoIIJsjCCAz0wggIloAMCAQICFC8qACUIEaMu7MxzpbPkTYQR3bc4MA0GCSqGSIb3DQ\
+   EBCwUAMC4x
+    DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+   2MTAyNjE1M
+    zM1N1oXDTI3MTAyNjE1MzM1N1owZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+   YWlkOmdsb2
+    JhbDppZC1jc254cS1waGNtYi1wdmNtbS14Y2RtYjEjMCEGA1UEBRMaaWQtY3NueHEtc\
+
+
+
+Drake                     Expires 28 April 2027                [Page 49]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   GhjbWItcHZ
+    jbW0teGNkbWIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASkjxaGoJge8BO9F7xokV\
+   fFWb+fXLOq
+    /VE87Yx3P9+argMPqsH9YIGu+sqtjnEPi9CvvgJTS26bjE2ExS/kqNUEo4HkMIHhMDQ\
+   GA1UdEQQtM
+    CuGKXVybjphaWQ6Z2xvYmFsOmlkLWNzbnhxLXBoY21iLXB2Y21tLXhjZG1iMAwGA1Ud\
+   EwEB/wQCMA
+    AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQdFrOnTCmB5XL1YzlTDUU/2kQFpDAfB\
+   gNVHSMEGDA
+    WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAWBgorBgEEAYPUXwEBBAhwb3J0YWJsZTAiBg\
+   orBgEEAYPU
+    XwECBBQyMDI2LTEwLTI2VDE1OjMzOjU3WjAPBgorBgEEAYPUXwEDBAEAMA0GCSqGSIb\
+   3DQEBCwUAA
+    4IBAQCyrHm0pyAJmiRKeTGHjs768WbCaSVglZ4DgLCzYodHKY6/CuFdcubPDY7kYIGH\
+   4GYHFxmavr
+    pUeWziAbxh4ufMZfDJCUAx3TfbOp6cvCvaHvhgPXwYvj9YOoSmfnsEHbYV6mwiFsTJO\
+   mKJYEjNtGB
+    +ndbGL/V90Ruk5z4ybS0B+0RjCoiT9LHx11v7Unl6+UiTcKk5Jlp6BGKsM6GZclfl/D\
+   fPmIB0Mv6j
+    t0odAzmAN+uRRamGRUvVxzhSSEjsANDLvW70XKmNCWhxX/wSxp8kHvb9L6vWwDVd5U5\
+   SqjnghTNmo
+    +UvcnT2gbseg2QxjSQ1Lc9BKtX9MpbYIQkkIHT1MIIDSDCCAjCgAwIBAgIUSEEYK28j\
+   6n6Vhr+w4P
+    vDkiuyQbEwDQYJKoZIhvcNAQELBQAwJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xS\
+   UQgUm9vdCB
+    DQSBBMB4XDTI2MDMxNDE0MTM0N1oXDTMxMDMxMzE0MTM0N1owLjEMMAoGA1UECgwDMU\
+   lEMR4wHAYD
+    VQQDDBUxSUQgSW50ZXJtZWRpYXRlIENBIEEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwA\
+   wggEKAoIBA
+    QC554xsVDRUJ3fMEQISK3ayhz2DTFpHDMvhBP6MHqTt/116HDJNj+2qXJdAmVH8GdXz\
+   Mwm/tt9nrG
+    rx4Sd3vcdodwpUnF2DhVASZ8e2TiYYB9a4DLuPc3lOw+lwVOqCQmUDBSneQffINU+87\
+   WofNtWZQV2
+    8Oxy2HFDfFhU/WkI91ayiI/ihHQvQTJpqqZPAbYn+EjD+8AarBbHgKsyyDxW8oOmws8\
+   2nYhn8eRdz
+    7O3De2w9cpZouJMyWLxG9nwUSOxD3fc1+vbcMeoRmBLRADx9RmhrHOiB2HFW579bsqd\
+   kzwQ10/SM5
+    /SXmhSdwajxU/mnkGZCE/vcndtUzJ5B/twjAgMBAAGjZjBkMBIGA1UdEwEB/wQIMAYB\
+   Af8CAQAwDg
+    YDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRnIsB54FVyNiezRKLzTN+AXd+WrjAfBgNVH\
+   SMEGDAWgBT
+    Dt+lZdcVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1\
+   CQPPH9XGzk
+    J+09iAhUkC3lLNK+hWMpBZ+S2Hs8KVl4aMaZmD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCy\
+   MR43GAoCcA
+    ZyDsq9pyyfIfXbQO6+dPU0TffL+9HgY2qme8XN/vsOqWY3gEvxihrW9inVc16EeDv1i\
+   RLcWUZe5o3
+    uS7tZTdS6/bkSb1lu81t9nK8YZ62jxNY2SB9acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzd\
+
+
+
+Drake                     Expires 28 April 2027                [Page 50]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   jS/Sal1/Rc
+    ATxrzjo8bn22feqeikJCaoq4lOK/kKBZfz9F0BGNVH95AjChp25bliGYQXMzPbiQuUn\
+   m6zqMdIYJg
+    /NtPzg6kujCCAyEwggIJoAMCAQICFGciMXFDNUuITsmdETPo+lhP0nQPMA0GCSqGSIb\
+   3DQEBCwUAM
+    CYxDDAKBgNVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQx\
+   NDEzNDdaGA
+    8yMDU2MDMwNjE0MTM0N1owJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vd\
+   CBDQSBBMII
+    BIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7\
+   kXquhEmyoZ
+    BED9/BkyzDsld4o3IyFdxvafrDu4e5YDzGIxjHgCvCvwUgbEZt6femOqSM91VPKMuBz\
+   MEq0rtHCz7
+    J/vS/nsfw3/NqgFN+j+q1HyHHVx+L3W8wQPWrVLqI2RUFPyU9oeZL6XKaaL0PNIwL2N\
+   xAKMuc5uQ/
+    BUPNjDsh7I4M5gD6X9WR/4ZEnvUd0slil8fJPLRjw6om2eq/kFl5pXW7mipdf2ufiYE\
+   Ic1lEBtf34
+    krCWM3PEvnl0Rs4eEirDirxx7PFP18GOgoNyaQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcI\
+   nRsTfdPQID
+    AQABo0UwQzASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4\
+   EFgQUw7fpW
+    XXFX/lGDy85m5SqTPkl8PAwDQYJKoZIhvcNAQELBQADggEBAAhRXzslG92koaKTfGR2\
+   KPZvOP3sxZ
+    vHBemfwb4tICwaegZlNtHztqP7qcLqWfsHG0Caob8e2rbjMjpPaMY81328kgl7goVPT\
+   Euq3Af5joZ
+    OArHfizgQl9r5RwT9G3y/AgDTnZDF6uUKt5P1u8PUd8t6dUANvIjMvqD6eV8ERioMu+\
+   BL7GpbDvy7
+    smvmsCpy1isY0aSlh112LGboJueGSbiMx35wMKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5i\
+   YcUEVptBZW
+    0Ik83sLXJdVG6Z745awnOAQnkriRwt2b0r/JRbmu7TQrzAv/K0PTXTuYf3DYxqCl04w\
+   8cpgEaPd5r
+    WG4yYxgbAwga0CAQEwRjAuMQwwCgYDVQQKDAMxSUQxHjAcBgNVBAMMFTFJRCBJbnRlc\
+   m1lZGlhdGU
+    gQ0EgQQIULyoAJQgRoy7szHOls+RNhBHdtzgwCwYJYIZIAWUDBAIBMAoGCCqGSM49BA\
+   MCBEcwRQIh
+    AKFhfNKLLvKXKVss7stuHLMStNLtowHLjT8NOX2ZJx5RAiAQILg+qS6utr0+sMLdgit\
+   LP+JfpXQPB
+    NWOdykrUuBA4w==;
+    aid=urn:aid:global:id-csnxq-phcmb-pvcmm-xcdmb;
+    bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+   lwIjoiYWly
+    cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+   1zL2FnZW50
+    cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWNzbnhxLXBoY21iLXB2Y21tLXhjZG1\
+   iIiwiaWF0I
+    joxNzkzMDM4OTUyLCJleHAiOjE3OTMwNDI1NTIsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+   RUMiLCJjcn
+    YiOiJQLTI1NiIsIngiOiJwSThXaHFDWUh2QVR2UmU4YUpGWHhWbV9uMXl6cXYxUlBPM\
+
+
+
+Drake                     Expires 28 April 2027                [Page 51]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   k1kel9mbXE
+    0IiwieSI6IkF3LXF3ZjFnZ2E3NnlxMk9jUS1MMEstLUFsTkxicHVNVFlURkwtU28xUV\
+   EifX0sImFp
+    ZCI6eyJ0cnVzdF90aWVyIjoicG9ydGFibGUifX0.7beiQevBcufYiV9i64nPXSYlE84\
+   jdn8eOVQSa
+    SUL9e1AC12r8JGr2OYf9MG76gcqZl52aZzloURiGbRFDnlY4Q
+
+   Hardware-attested email from the AIRS reference implementation.
+   Identity tier: portable
+
+       Figure 2: Example 2: Portable-Tier PIV/YubiKey (Combined Mode)
+
+A.3.  Example 3: Enclave-Tier Apple Secure Enclave (Combined Mode)
+
+   The enclave tier: a non-extractable P-256 key in the Apple Secure
+   Enclave of an Apple M4 Mac running macOS 26.  Mode 1 is an ES256
+   signature made inside the Secure Enclave; Mode 2 discloses
+   aid.trust_tier "enclave".  The Registrar accepted this binding on
+   trust on first use, without vendor attestation, so to a Relying Party
+   the enclave tier here records the enrollee's assertion of enclave
+   custody rather than verified extraction resistance (see the enclave
+   tier of [I-D.drake-agent-identity-registry]).
+
+   NOTE: '\' line wrapping per RFC 8792
+
+   Delivered-To: id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com
+   X-Spam-Status: No
+   Received: from mac-mini.local (unknown [110.143.72.26] (AS1221 \
+   Telstra Limited, AU))
+    (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+    by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBFCA8453E525;
+    Mon, 26 Oct 2026 18:26:14 +0000
+   Authentication-Results: mail.mailpal.com; none
+   Return-Path: <id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com>
+   DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+   c=relaxed/relaxed; r=y;
+    h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+   te
+    :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+    :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+    t=1793039174; x=1793903174; bh=YSy6Vho/eRXT+cCUetX+TJe4uKZh1xp9dV0k\
+   mDw25Zs=
+    ; b=kjulN3yLJmswjObE7zmSAGhh5rC8kVnsZ2Yhe/AVA2AJbmr4KaLQWQaaA8eR9ro\
+   ubc1zCqt
+    4UgUu0xTMqQSLn2d7Cj6R7E7MQEHbn0tqT9V46clryamwTBHmJN5mgRuV4LhN73Flz6\
+   7y2ehFc+
+    G6n8tIZ8+dbbbYru/PLCAlny9EQN1mVCQJquteJYX+d11hAK6Kojd7gldrBcl1zhtLQ\
+   FVmvDSY+
+
+
+
+Drake                     Expires 28 April 2027                [Page 52]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    OynaWSphdVcOE4F2nLPqdB2E6yobZ22M5rTKkhR7/w442FUB3LkdpVKECovmPTAwfIl\
+   4J8gcC8y
+    l58F/KltE2NEaYNTXAN9pbjRIG7TRssljh60iYMqvuTa3A==;
+   Authentication-Results: mailpal.com; hw-attest=pass header.typ=ENC \
+   header.alg=ES256 header.path=registrar header.tier=enclave \
+   header.aid="urn:aid:global:id-ddmzh-dpcfv-fqrxj-xmxsj"
+   Authentication-Results: mailpal.com; hw-trust=pass \
+   header.mode=identified header.tier=enclave header.issuer="https://1i\
+   d.com/realms/agents" header.aid="urn:aid:global:id-ddmzh-dpcfv-fqrxj\
+   -xmxsj"
+   From: Enclave Example Agent <id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com>
+   To: id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com
+   Subject: Example 3: enclave-tier Apple Secure Enclave (Combined Mode)
+   Date: Tue, 27 Oct 2026 04:26:04 +1000
+   Message-ID: <179303916458.69111.7026468321028687105@mailpal.com>
+   Content-Type: text/plain; charset="utf-8"
+   Content-Transfer-Encoding: quoted-printable
+   MIME-Version: 1.0
+   Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+   1lczI1Ni0x
+    IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+   b20vcmVhbG
+    1zL2FnZW50cyIsImlhdCI6MTc5MzAzOTE2OSwiZXhwIjoxNzkzMDQyNzY5LCJub25jZ\
+   SI6Ijhud0h
+    IbEN1S19mazUxS2syX0lWX0lnRXhuYjRmOTRmdFBUSmFjamlDTDgiLCJfc2RfYWxnIj\
+   oic2hhLTI1
+    NiIsIl9zZCI6WyItR3hxWUFXaW9haFJzOE1mYXZINzhiczJQakZUeWZ4V2ZwaVA3OGp\
+   Pd2tnIiwiR
+    1RWSkV0bmc3NEYyUFlLUDFuRGtmb3BXLXFYbV9kc3hfRXVhMXdKaGNEayJdLCJjbmYi\
+   OnsiandrIj
+    p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiNXA4azducXU2d09nSDJjaHlpZ\
+   1ZWV0EtNk1
+    wYVFVRFN6bU9GcjZjNEpZOCIsInkiOiJZV2hRakI3RGZuZ084ZzlDTVZLM3lKOFZlRj\
+   BjLUx5bnQx
+    YnRVc0tHOTVFIn19fQ.vN-BoLrkIcw5iZXiN2_1ZEsNpP2jfdfYSBUHmhNnXgImgQ1r\
+   5CJj4_8ggn
+    DnLzRudCLsqP171_YB4IXxNLGNjg~WyJyWE80eTVoQW44Z0txaGh2V1J0blR3IiwiYW\
+   lkIix7InRy
+    dXN0X3RpZXIiOiJlbmNsYXZlIn1d~WyJqTFR2ZVUxLVVLMVZUNDBkUmcteTB3Iiwic3\
+   ViIiwidXJu
+    OmFpZDpnbG9iYWw6aWQtZGRtemgtZHBjZnYtZnFyeGoteG14c2oiXQ~
+   X-1ID-Contact-Token: dc58e959
+   Hardware-Attestation: v=1;
+    typ=ENC;
+    alg=ES256;
+    h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+   ferences:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+
+
+
+Drake                     Expires 28 April 2027                [Page 53]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   proof:from:
+    to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+   s:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof;
+    bh=YSy6Vho_eRXT-cCUetX-TJe4uKZh1xp9dV0kmDw25Zs;
+    ts=1793039171;
+    chain=MIIKmgYJKoZIhvcNAQcCoIIKizCCCocCAQExDTALBglghkgBZQMEAgEwCwYJK\
+   oZIhvcNAQc
+    BoIIJsTCCAzwwggIkoAMCAQICFEfhsJpW3QQftqnKgxIbwg6GSxA7MA0GCSqGSIb3DQ\
+   EBCwUAMC4x
+    DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+   2MTAyNjE4M
+    jAyM1oXDTI3MTAyNjE4MjAyM1owZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+   YWlkOmdsb2
+    JhbDppZC1kZG16aC1kcGNmdi1mcXJ4ai14bXhzajEjMCEGA1UEBRMaaWQtZGRtemgtZ\
+   HBjZnYtZnF
+    yeGoteG14c2owWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATmnyTueq7rA6AfZyHKKB\
+   VVYD7oylpB
+    QNLOY4Wvpzglj2FoUIwew354DvIPQjFSt8ifFXhdHPi8p7dW7VLChveRo4HjMIHgMDQ\
+   GA1UdEQQtM
+    CuGKXVybjphaWQ6Z2xvYmFsOmlkLWRkbXpoLWRwY2Z2LWZxcnhqLXhteHNqMAwGA1Ud\
+   EwEB/wQCMA
+    AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRtG4VeMQgfQG6sDO7ysTp6Tk24IjAfB\
+   gNVHSMEGDA
+    WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAVBgorBgEEAYPUXwEBBAdlbmNsYXZlMCIGCi\
+   sGAQQBg9Rf
+    AQIEFDIwMjYtMTAtMjZUMTg6MjA6MjJaMA8GCisGAQQBg9RfAQMEAQAwDQYJKoZIhvc\
+   NAQELBQADg
+    gEBAFSsqyipRmXsiOtNO7ayqEy3v1TWUJdcP/yH9a1EvOOu/WUoznkOAzu/uC5kCmKF\
+   ceDdPGleRH
+    OVX8rCqrDQHjFqSJiCSHppPreHUFIxbqY8e6T+pJFr5Gpyc05RyiqaWKlnlIfi1j996\
+   MZ6LUU1zaY
+    2yZPFijCusyNUF1Jo8IvwfUjU/wvZBKq/SBQmH+C9il/en4++ltE6wx8uSiQCF9IfYD\
+   SaF9z21ZKp
+    PYq+n7K4VrtTFyUu/HEso2rslAYNy4WdLGXxXSTXiqyX6JGdf9pKgJfFff6M1sjnamG\
+   PE6gkY/zRv
+    CMy/YSJN0qXm4QH0SnU6aZy1YaZ2AaG5RoO91owggNIMIICMKADAgECAhRIQRgrbyPq\
+   fpWGv7Dg+8
+    OSK7JBsTANBgkqhkiG9w0BAQsFADAmMQwwCgYDVQQKDAMxSUQxFjAUBgNVBAMMDTFJR\
+   CBSb290IEN
+    BIEEwHhcNMjYwMzE0MTQxMzQ3WhcNMzEwMzEzMTQxMzQ3WjAuMQwwCgYDVQQKDAMxSU\
+   QxHjAcBgNV
+    BAMMFTFJRCBJbnRlcm1lZGlhdGUgQ0EgQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADC\
+   CAQoCggEBA
+    LnnjGxUNFQnd8wRAhIrdrKHPYNMWkcMy+EE/owepO3/XXocMk2P7apcl0CZUfwZ1fMz\
+   Cb+232esav
+    HhJ3e9x2h3ClScXYOFUBJnx7ZOJhgH1rgMu49zeU7D6XBU6oJCZQMFKd5B98g1T7zta\
+
+
+
+Drake                     Expires 28 April 2027                [Page 54]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   h821ZlBXbw
+    7HLYcUN8WFT9aQj3VrKIj+KEdC9BMmmqpk8Btif4SMP7wBqsFseAqzLIPFbyg6bCzza\
+   diGfx5F3Ps
+    7cN7bD1ylmi4kzJYvEb2fBRI7EPd9zX69twx6hGYEtEAPH1GaGsc6IHYcVbnv1uyp2T\
+   PBDXT9Izn9
+    JeaFJ3BqPFT+aeQZkIT+9yd21TMnkH+3CMCAwEAAaNmMGQwEgYDVR0TAQH/BAgwBgEB\
+   /wIBADAOBg
+    NVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFGciwHngVXI2J7NEovNM34Bd35auMB8GA1UdI\
+   wQYMBaAFMO
+    36Vl1xV/5Rg8vOZuUqkz5JfDwMA0GCSqGSIb3DQEBCwUAA4IBAQCFQMWZU369nhIrUJ\
+   A88f1cbOQn
+    7T2ICFSQLeUs0r6FYykFn5LYezwpWXhoxpmYPb6M6sLhaPk576tWwnvJaImZ9D18LIx\
+   HjcYCgJwBn
+    IOyr2nLJ8h9dtA7r509TRN98v70eBjaqZ7xc3++w6pZjeAS/GKGtb2KdVzXoR4O/WJE\
+   txZRl7mje5
+    Lu1lN1Lr9uRJvWW7zW32crxhnraPE1jZIH1pxf2rH0xY2MFKxfvJOMcQBWf9Do4zN2N\
+   L9JqXX9FwB
+    PGvOOjxufbZ96p6KQkJqiriU4r+QoFl/P0XQEY1Uf3kCMKGnbluWIZhBczM9uJC5Seb\
+   rOox0hgmD8
+    20/ODqS6MIIDITCCAgmgAwIBAgIUZyIxcUM1S4hOyZ0RM+j6WE/SdA8wDQYJKoZIhvc\
+   NAQELBQAwJ
+    jEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMCAXDTI2MDMxNDE0\
+   MTM0N1oYDz
+    IwNTYwMzA2MTQxMzQ3WjAmMQwwCgYDVQQKDAMxSUQxFjAUBgNVBAMMDTFJRCBSb290I\
+   ENBIEEwggE
+    iMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDgJKSWsnkknCqkdCRJsfouhBmnuR\
+   eq6ESbKhkE
+    QP38GTLMOyV3ijcjIV3G9p+sO7h7lgPMYjGMeAK8K/BSBsRm3p96Y6pIz3VU8oy4HMw\
+   SrSu0cLPsn
+    +9L+ex/Df82qAU36P6rUfIcdXH4vdbzBA9atUuojZFQU/JT2h5kvpcppovQ80jAvY3E\
+   Aoy5zm5D8F
+    Q82MOyHsjgzmAPpf1ZH/hkSe9R3SyWKXx8k8tGPDqibZ6r+QWXmldbuaKl1/a5+JgQh\
+   zWUQG1/fiS
+    sJYzc8S+eXRGzh4SKsOKvHHs8U/XwY6Cg3JpDw01llI6oLosytZ2hc7q/wwpBVwJwid\
+   GxN909AgMB
+    AAGjRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQ\
+   WBBTDt+lZd
+    cVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEACFFfOyUb3aShopN8ZHYo\
+   9m84/ezFm8
+    cF6Z/Bvi0gLBp6BmU20fO2o/upwupZ+wcbQJqhvx7atuMyOk9oxjzXfbySCXuChU9MS\
+   6rcB/mOhk4
+    Csd+LOBCX2vlHBP0bfL8CANOdkMXq5Qq3k/W7w9R3y3p1QA28iMy+oPp5XwRGKgy74E\
+   vsalsO/Luy
+    a+awKnLWKxjRpKWHXXYsZugm54ZJuIzHfnAwqvqh9fLQQT4jPYnE9fX6s/PFn1gjmJh\
+   xQRWm0FlbQ
+    iTzewtcl1UbpnvjlrCc4BCeSuJHC3ZvSv8lFua7tNCvMC/8rQ9NdO5h/cNjGoKXTjDx\
+   ymARo93mtY
+    bjJjGBsDCBrQIBATBGMC4xDDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVyb\
+
+
+
+Drake                     Expires 28 April 2027                [Page 55]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   WVkaWF0ZSB
+    DQSBBAhRH4bCaVt0EH7apyoMSG8IOhksQOzALBglghkgBZQMEAgEwCgYIKoZIzj0EAw\
+   IERzBFAiEA
+    phw5eb074Uo1Km81kCThIlIN5Xoh/mzHeKThTOPFWRYCIGVgM2fMyEgXM2nQFHfN4Zt\
+   0gVPsJWW1m
+    bEGbtwta6jq;
+    aid=urn:aid:global:id-ddmzh-dpcfv-fqrxj-xmxsj;
+    bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+   lwIjoiYWly
+    cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+   1zL2FnZW50
+    cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWRkbXpoLWRwY2Z2LWZxcnhqLXhteHN\
+   qIiwiaWF0I
+    joxNzkzMDM5MTY5LCJleHAiOjE3OTMwNDI3NjksImNuZiI6eyJqd2siOnsia3R5Ijoi\
+   RUMiLCJjcn
+    YiOiJQLTI1NiIsIngiOiI1cDhrN25xdTZ3T2dIMmNoeWlnVlZXQS02TXBhUVVEU3ptT\
+   0ZyNmM0Slk
+    4IiwieSI6IllXaFFqQjdEZm5nTzhnOUNNVkszeUo4VmVGMGMtTHludDFidFVzS0c5NU\
+   UifX0sImFp
+    ZCI6eyJ0cnVzdF90aWVyIjoiZW5jbGF2ZSJ9fQ.2CeTSqe9xWkl6LEks5ZigshS7xXT\
+   lNg9RVwWfD
+    E_njFNQG4eJ9A1DVqqOpeYhoUVeVLu8_KJ3qSPvXfGMn4f9Q
+
+   Hardware-attested email from the AIRS reference implementation.
+   Identity tier: enclave
+
+      Figure 3: Example 3: Enclave-Tier Apple Secure Enclave (Combined
+                                   Mode)
+
+A.4.  Example 4: Virtual-Tier vTPM (Combined Mode)
+
+   The virtual tier: a VMware virtual TPM 2.0 (manufacturer "VMW") in a
+   Windows 11 guest; the Registrar assigns the virtual tier to a
+   hypervisor-provided TPM.  Mode 1 is an RS256 signature made inside
+   the vTPM by the enrolled proof key; Mode 2 discloses aid.trust_tier
+   "virtual".
+
+   NOTE: '\' line wrapping per RFC 8792
+
+   Delivered-To: id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com
+   X-Spam-Status: No
+   Received: from [172.22.1.46] (unknown [110.143.72.26] (AS1221 \
+   Telstra Limited, AU))
+    (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+    by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF39CB93D925;
+    Mon, 26 Oct 2026 18:21:17 +0000
+   Authentication-Results: mail.mailpal.com; none
+   Return-Path: <id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com>
+
+
+
+Drake                     Expires 28 April 2027                [Page 56]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+   c=relaxed/relaxed; r=y;
+    h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+   te
+    :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+    :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+    t=1793038878; x=1793902878; bh=vj+a5DUTo47HIO9SMZ9mTYE7CmfNEiSlFJWv\
+   HPz0cZM=
+    ; b=mpXMiOSY8Hoa8bLZVx8Y+is3tKSOMA4W/tjk6tG2H0DffJkc2qyiHv8MO6zWodl\
+   f6MCggUt
+    UWVevSSX14JNX8pBXkKqxRocgrY/M32noSuJoZfyIpwRhnwTVbCPRuZS2QFZWGSTFsV\
+   1odtiP6r
+    t35tg/gBLdOwPS0AbaN0ADECGOscZTbD7r8tlQUvvsPAY8M+ZHpfDFIpMOgRyp1gCK9\
+   UtzYRfmP
+    k7a9f96O/kaynk6qVFHTGWbg6j5zMUAy60PEQ7nobfDXNgiY39MsXGRf9+568s0yptH\
+   KSwaJpCC
+    h5qXV462dWOkPTFSb0XUF4uqsuET6eKY8WUCuwk7npU82g==;
+   Authentication-Results: mailpal.com; hw-attest=pass header.typ=VRT \
+   header.alg=RS256 header.path=registrar header.tier=virtual \
+   header.aid="urn:aid:global:id-tpfkx-qdzts-wmtbm-rnjpc"
+   Authentication-Results: mailpal.com; hw-trust=pass \
+   header.mode=identified header.tier=virtual header.issuer="https://1i\
+   d.com/realms/agents" header.aid="urn:aid:global:id-tpfkx-qdzts-wmtbm\
+   -rnjpc"
+   From: AIRS-example-virtual <id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com>
+   To: id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com
+   Subject: Example 4: virtual-tier vTPM (Combined Mode)
+   Date: Tue, 27 Oct 2026 05:21:02 +1100
+   Message-ID: <179303886224.8844.10523257280033703201@mailpal.com>
+   Content-Type: text/plain; charset="utf-8"
+   Content-Transfer-Encoding: quoted-printable
+   MIME-Version: 1.0
+   Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+   1lczI1Ni0x
+    IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+   b20vcmVhbG
+    1zL2FnZW50cyIsImlhdCI6MTc5MzAzODg3MywiZXhwIjoxNzkzMDQyNDczLCJub25jZ\
+   SI6IlQ5T2J
+    uN1Z4STFRbWJOZUlhQlNDRVlvRW41VktpdC1NSUVPLUlRN3MxYkUiLCJfc2RfYWxnIj\
+   oic2hhLTI1
+    NiIsIl9zZCI6WyJKazY5MlF4d3lUTDVZTUQ4Q0ZrVXVQYTJJNC1rSkwzdzVtbzIzRDB\
+   Eci1rIiwiN
+    094VmNzYkVnLUpzclAwam9PdWt1VElJZ3RGemo0X1FOQ094TGNmUjF4RSJdLCJjbmYi\
+   OnsiandrIj
+    p7Imt0eSI6IlJTQSIsIm4iOiI1cnppMXpkMkgxOVVNRlpOUURnajR3dWdpaGJHZHlkL\
+   XA5Rm1qYms
+    0T3RDTHlkMWxPcE5sZXVQMmEzYVJVdUFXMVExUHR2bGVNWWRFX1BfTWVrR2J4MDNHTC\
+   1NaElZNURw
+
+
+
+Drake                     Expires 28 April 2027                [Page 57]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    MkpZenZFLUtSZS1KM19XSE1JR1lnNlN0TklCcU5XU3ZQZFFsdnBUamNKMVVCRmYwMUN\
+   IandaMk90e
+    mwyMlRmUEstMmE5ckY4aHFBSjZkQUN2QkxnaV9vMzd4VDdrNjlSRnp2WGN2WV9hbDN6\
+   VzdpN3FWbU
+    FSNmxzclIxUjB1aGpHcng4UUJQOUc3aXdkbTBrWEtaQk13MVVKeFpHcFdsazlHbDdNM\
+   lMwem9WOUx
+    hMXczT0FZU0VIZnp3NnpzUWllME9WNndONDkyX2dSWE5jTTZndmpkZlBaTklVRHd3Sm\
+   FxRWl5N1Vx
+    bkZ1WjUzc29Gc2x3TFEiLCJlIjoiQVFBQiJ9fX0.HpIn6h-jFj7SuOyq2N3jvZWqR1-\
+   apqOJPtMVp
+    3TWyrOUzWoMGG5JI7_8g7WQfw3KaBWkTVeu8DkJRQ3PECNl3Q~WyJsV01mMldTcFdTZ\
+   XlWNldFMzB
+    OZTZnIiwiYWlkIix7InRydXN0X3RpZXIiOiJ2aXJ0dWFsIn1d~WyJHdW5wNDBaOEdOb\
+   WktNS04MWs
+    wUndBIiwic3ViIiwidXJuOmFpZDpnbG9iYWw6aWQtdHBma3gtcWR6dHMtd210Ym0tcm\
+   5qcGMiXQ~
+   X-1ID-Contact-Token: be214e9e
+   Hardware-Attestation: v=1;
+    typ=VRT;
+    alg=RS256;
+    h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+   ferences:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof:from:
+    to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+   s:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof;
+    bh=vj-a5DUTo47HIO9SMZ9mTYE7CmfNEiSlFJWvHPz0cZM;
+    ts=1793038874;
+    chain=MIIMJQYJKoZIhvcNAQcCoIIMFjCCDBICAQExDTALBglghkgBZQMEAgEwCwYJK\
+   oZIhvcNAQc
+    BoIIKfDCCBAcwggLvoAMCAQICFHxB3ODPK11ep5JV6XmCS+OajD/SMA0GCSqGSIb3DQ\
+   EBCwUAMC4x
+    DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+   2MTAyNjE1N
+    DE0OFoXDTI3MTAyNjE1NDE0OFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+   YWlkOmdsb2
+    JhbDppZC10cGZreC1xZHp0cy13bXRibS1ybmpwYzEjMCEGA1UEBRMaaWQtdHBma3gtc\
+   WR6dHMtd21
+    0Ym0tcm5qcGMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDmvOLXN3YfX1\
+   QwVk1AOCPj
+    C6CKFsZ3J36n0WaNuTg60IvJ3WU6k2V64/ZrdpFS4BbVDU+2+V4xh0T8/8x6QZvHTcY\
+   v4yEhjkOnY
+    ljO8T4pF74nf9YcwgZiDpK00gGo1ZK891CW+lONwnVQEV/TUIePBnY63OXbZN88r7Zr\
+   2sXyGoAnp0
+    AK8EuCL+jfvFPuTr1EXO9dy9j9qXfNbuLupWYBHqWytHVHS6GMavHxAE/0buLB2bSRc\
+   pkEzDVQnFk
+
+
+
+Drake                     Expires 28 April 2027                [Page 58]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    alaWT0aXszZLTOhX0trXDc4BhIQd/PDrOxCJ7Q5XrA3j3b+BFc1wzqC+N189k0hQPDA\
+   lqoSLLtSqc
+    W5nneygWyXAtAgMBAAGjgeMwgeAwNAYDVR0RBC0wK4YpdXJuOmFpZDpnbG9iYWw6aWQ\
+   tdHBma3gtc
+    WR6dHMtd210Ym0tcm5qcGMwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYD\
+   VR0OBBYEFJ
+    0whDIaz3zGr6oJX0vTmPJNLqFaMB8GA1UdIwQYMBaAFGciwHngVXI2J7NEovNM34Bd3\
+   5auMBUGCis
+    GAQQBg9RfAQEEB3ZpcnR1YWwwIgYKKwYBBAGD1F8BAgQUMjAyNi0wOS0yNVQxMDo0ND\
+   oyNFowDwYK
+    KwYBBAGD1F8BAwQBADANBgkqhkiG9w0BAQsFAAOCAQEAXmenwvp6D9ij1VCieK+NOAI\
+   yCH2gEwFP2
+    vgXMgyW7wE77bN4dDjvNVw0aqMY9e45xDNpMp/Z4OZiZmEDWpwIXiBTJkVI1jqNhbaN\
+   rC3/+rNKSi
+    FfOfI/uR56E/rn9HC0a/vCg79qoz4N4ecbgNfeCdnoWvodPPChVchdGiHi8H7kR9uBO\
+   e3iuWTPRBa
+    VQM9wZXSLMFrd7Y5CEAWjh9XYpnyh/whPRL5clxLp646DKbopQzHnitInqobalesX1a\
+   QBQYZtSVun
+    u0tjXcYZSHYBcXetFyDipTB4EeHj9AgiUvpa+l/tcv6MDoCC5yWdx52Ti6v1spziXSH\
+   VtIuTUzFuf
+    jCCA0gwggIwoAMCAQICFEhBGCtvI+p+lYa/sOD7w5IrskGxMA0GCSqGSIb3DQEBCwUA\
+   MCYxDDAKBg
+    NVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAeFw0yNjAzMTQxNDEzNDdaF\
+   w0zMTAzMTM
+    xNDEzNDdaMC4xDDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZS\
+   BDQSBBMIIB
+    IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAueeMbFQ0VCd3zBECEit2soc9g0x\
+   aRwzL4QT+j
+    B6k7f9dehwyTY/tqlyXQJlR/BnV8zMJv7bfZ6xq8eEnd73HaHcKVJxdg4VQEmfHtk4m\
+   GAfWuAy7j3
+    N5TsPpcFTqgkJlAwUp3kH3yDVPvO1qHzbVmUFdvDscthxQ3xYVP1pCPdWsoiP4oR0L0\
+   EyaaqmTwG2
+    J/hIw/vAGqwWx4CrMsg8VvKDpsLPNp2IZ/HkXc+ztw3tsPXKWaLiTMli8RvZ8FEjsQ9\
+   33Nfr23DHq
+    EZgS0QA8fUZoaxzogdhxVue/W7KnZM8ENdP0jOf0l5oUncGo8VP5p5BmQhP73J3bVMy\
+   eQf7cIwIDA
+    QABo2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4E\
+   FgQUZyLAee
+    BVcjYns0Si80zfgF3flq4wHwYDVR0jBBgwFoAUw7fpWXXFX/lGDy85m5SqTPkl8PAwD\
+   QYJKoZIhvc
+    NAQELBQADggEBAIVAxZlTfr2eEitQkDzx/Vxs5CftPYgIVJAt5SzSvoVjKQWfkth7PC\
+   lZeGjGmZg9
+    vozqwuFo+Tnvq1bCe8loiZn0PXwsjEeNxgKAnAGcg7KvacsnyH120DuvnT1NE33y/vR\
+   4GNqpnvFzf
+    77DqlmN4BL8Yoa1vYp1XNehHg79YkS3FlGXuaN7ku7WU3Uuv25Em9ZbvNbfZyvGGeto\
+   8TWNkgfWnF
+    /asfTFjYwUrF+8k4xxAFZ/0OjjM3Y0v0mpdf0XAE8a846PG59tn3qnopCQmqKuJTiv5\
+   CgWX8/RdAR
+
+
+
+Drake                     Expires 28 April 2027                [Page 59]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    jVR/eQIwoaduW5YhmEFzMz24kLlJ5us6jHSGCYPzbT84OpLowggMhMIICCaADAgECAh\
+   RnIjFxQzVL
+    iE7JnREz6PpYT9J0DzANBgkqhkiG9w0BAQsFADAmMQwwCgYDVQQKDAMxSUQxFjAUBgN\
+   VBAMMDTFJR
+    CBSb290IENBIEEwIBcNMjYwMzE0MTQxMzQ3WhgPMjA1NjAzMDYxNDEzNDdaMCYxDDAK\
+   BgNVBAoMAz
+    FJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTCCASIwDQYJKoZIhvcNAQEBBQADggEPA\
+   DCCAQoCggE
+    BAOAkpJayeSScKqR0JEmx+i6EGae5F6roRJsqGQRA/fwZMsw7JXeKNyMhXcb2n6w7uH\
+   uWA8xiMYx4
+    Arwr8FIGxGben3pjqkjPdVTyjLgczBKtK7Rws+yf70v57H8N/zaoBTfo/qtR8hx1cfi\
+   91vMED1q1S
+    6iNkVBT8lPaHmS+lymmi9DzSMC9jcQCjLnObkPwVDzYw7IeyODOYA+l/Vkf+GRJ71Hd\
+   LJYpfHyTy0
+    Y8OqJtnqv5BZeaV1u5oqXX9rn4mBCHNZRAbX9+JKwljNzxL55dEbOHhIqw4q8cezxT9\
+   fBjoKDcmkP
+    DTWWUjqguizK1naFzur/DCkFXAnCJ0bE33T0CAwEAAaNFMEMwEgYDVR0TAQH/BAgwBg\
+   EB/wIBATAO
+    BgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFMO36Vl1xV/5Rg8vOZuUqkz5JfDwMA0GCSq\
+   GSIb3DQEBC
+    wUAA4IBAQAIUV87JRvdpKGik3xkdij2bzj97MWbxwXpn8G+LSAsGnoGZTbR87aj+6nC\
+   6ln7BxtAmq
+    G/Htq24zI6T2jGPNd9vJIJe4KFT0xLqtwH+Y6GTgKx34s4EJfa+UcE/Rt8vwIA052Qx\
+   erlCreT9bv
+    D1HfLenVADbyIzL6g+nlfBEYqDLvgS+xqWw78u7Jr5rAqctYrGNGkpYdddixm6Cbnhk\
+   m4jMd+cDCq
+    +qH18tBBPiM9icT19fqz88WfWCOYmHFBFabQWVtCJPN7C1yXVRume+OWsJzgEJ5K4kc\
+   Ldm9K/yUW5
+    ru00K8wL/ytD0107mH9w2MagpdOMPHKYBGj3ea1huMmMYIBbzCCAWsCAQEwRjAuMQww\
+   CgYDVQQKDA
+    MxSUQxHjAcBgNVBAMMFTFJRCBJbnRlcm1lZGlhdGUgQ0EgQQIUfEHc4M8rXV6nklXpe\
+   YJL45qMP9I
+    wCwYJYIZIAWUDBAIBMA0GCSqGSIb3DQEBCwUABIIBABUPlVJLtKq+4xRjjfw7W13AVr\
+   UiN5r3tFEn
+    DZF+I9TCHD6pBXL4AK9GzqSvUuzUv2nxGUoJJoG3jCT2AkfrchC/B7kETTCEIZzFqwi\
+   LIufR1gje3
+    Q98D6iEWk9AaB/9cb4Msrd+T5eTwXlCML8J6FOu+830xieqvLLaVsZ1zM15fty3Czee\
+   lORux/GHJf
+    jp2Cw5vPmt5lNpQNnQLCtoAlRPe6YGkSpmOEUk6G20NnPhdbEozVlTWTD78JHYFMQ1h\
+   C81b7GVmSh
+    v5NHC8q952YErbBwGyP8uV3jVMG2hOvnaiWnQbEzYnGjch4ijPrfNe/CAms0zDiw+t0\
+   JwfhrLL+g=;
+    aid=urn:aid:global:id-tpfkx-qdzts-wmtbm-rnjpc;
+    bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+   lwIjoiYWly
+    cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+   1zL2FnZW50
+    cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLXRwZmt4LXFkenRzLXdtdGJtLXJuanB\
+
+
+
+Drake                     Expires 28 April 2027                [Page 60]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   jIiwiaWF0I
+    joxNzkzMDM4ODcyLCJleHAiOjE3OTMwNDI0NzIsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+   UlNBIiwibi
+    I6IjVyemkxemQySDE5VU1GWk5RRGdqNHd1Z2loYkdkeWQtcDlGbWpiazRPdENMeWQxb\
+   E9wTmxldVA
+    yYTNhUlV1QVcxUTFQdHZsZU1ZZEVfUF9NZWtHYngwM0dMLU1oSVk1RHAySll6dkUtS1\
+   JlLUozX1dI
+    TUlHWWc2U3ROSUJxTldTdlBkUWx2cFRqY0oxVUJGZjAxQ0hqd1oyT3R6bDIyVGZQSy0\
+   yYTlyRjhoc
+    UFKNmRBQ3ZCTGdpX28zN3hUN2s2OVJGenZYY3ZZX2FsM3pXN2k3cVZtQVI2bHNyUjFS\
+   MHVoakdyeD
+    hRQlA5Rzdpd2RtMGtYS1pCTXcxVUp4WkdwV2xrOUdsN00yUzB6b1Y5TGExdzNPQVlTR\
+   Uhmenc2enN
+    RaWUwT1Y2d040OTJfZ1JYTmNNNmd2amRmUFpOSVVEd3dKYXFFaXk3VXFuRnVaNTNzb0\
+   ZzbHdMUSIs
+    ImUiOiJBUUFCIn19LCJhaWQiOnsidHJ1c3RfdGllciI6InZpcnR1YWwifX0.iMc1-ui\
+   uj6F_vnkHZ
+    3tO0YOhfUYv4Mvr6229NpWf_0hExKK4m3qK3j01zoKiOXCfuSuEQYkCBpWFeGRRWu8_\
+   Lw
+
+   Hardware-attested email from the AIRS reference implementation.
+   Identity tier: virtual
+
+           Figure 4: Example 4: Virtual-Tier vTPM (Combined Mode)
+
+A.5.  Example 5: Declared-Tier Software Key (Combined Mode)
+
+   The declared tier: a software-held P-256 key (typ=SFT, alg=ES256)
+   with no hardware root.  The header structure is identical to the
+   hardware tiers, so verifiers treat it uniformly and simply observe
+   the lower tier.
+
+   NOTE: '\' line wrapping per RFC 8792
+
+   Delivered-To: id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com
+   X-Spam-Status: No
+   Received: from [172.22.1.94] (unknown [110.143.72.26] (AS1221 \
+   Telstra Limited, AU))
+    (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+    by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF5E3273DD25;
+    Mon, 26 Oct 2026 18:22:32 +0000
+   Authentication-Results: mail.mailpal.com; none
+   Return-Path: <id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com>
+   DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+   c=relaxed/relaxed; r=y;
+    h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+   te
+    :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+
+
+
+Drake                     Expires 28 April 2027                [Page 61]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+    t=1793038952; x=1793902952; bh=SBrxyAzkA9Uw7luX3YEZSZrwdWg3z7t09dF6\
+   bOUJmPg=
+    ; b=QcX7bpVx4PkIyqTpFDYe2n6NuzB8RPdTFqgxkgmHeD8Ut1nOn7+Unr8YO2wUzx/\
+   +Pj2eWnY
+    cF5pV+9oYxvceBiAhNgiQtpvuhwaqLucNx+KzyuST3ueg225+JZykI8ndvDYjfXDFXg\
+   VzbYPrMi
+    WHxN/UIyxCLaJRP4RtxjsMfBG7WMfQ8i2rNeVuX0ys4o5sOLXu7DaB7r/hdMs+YTbdL\
+   R7XlTWGW
+    WgmSvPseBFkYdcWNpXbkv2nGZEjKLR9fkjJexTHhqbUYhhLaItrJnDrDKqBqMeF80C1\
+   BmNunkP7
+    UZhJtGYe+uoGJwhiuymy26ddlHe3m4RkaB0+T+53DCrA7g==;
+   Authentication-Results: mailpal.com; hw-attest=pass header.typ=SFT \
+   header.alg=ES256 header.path=registrar header.tier=declared \
+   header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq"
+   Authentication-Results: mailpal.com; hw-trust=pass \
+   header.mode=identified header.tier=declared header.issuer="https://1\
+   id.com/realms/agents" header.aid="urn:aid:global:id-hgsst-vgcfx-pwdv\
+   w-jkbjq"
+   From: Declared Example Agent <id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com>
+   To: id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com
+   Subject: Example 5: declared-tier software key (Combined Mode)
+   Date: Tue, 27 Oct 2026 04:22:27 +1000
+   Message-ID: <179303894712.4072.5248218054662363208@mailpal.com>
+   Content-Type: text/plain; charset="utf-8"
+   Content-Transfer-Encoding: quoted-printable
+   MIME-Version: 1.0
+   Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+   1lczI1Ni0x
+    IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+   b20vcmVhbG
+    1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk0NywiZXhwIjoxNzkzMDQyNTQ3LCJub25jZ\
+   SI6Inh5T0J
+    tc0Y4NWVBREhxeVgxNXdnUERidXMwNjBFUjdHUTdzUzJzQmhCemMiLCJfc2RfYWxnIj\
+   oic2hhLTI1
+    NiIsIl9zZCI6WyJkSlFjMl9XdUtOQVVrWmtaREIySE9SR3IzTWpJdjZhTmV5S3ZPU3R\
+   rRTdRIiwiZ
+    UxkblV6anhhZk9VT2ZBN25KNGtxT2g1ek9ySS1USURhd0p5NlROWTFQVSJdLCJjbmYi\
+   OnsiandrIj
+    p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiRTVrWHVybm8tZzhWb0tLS1VCR\
+   kZoNllaWS1
+    lYUk2UXdhUmJLaEJudGNwQSIsInkiOiJ2eERwVUI4MkxOM2FtdGhaUUlBY1Y1dzlEQk\
+   lDSTYtOE9L
+    bkhTUFVGV2VzIn19fQ.4ukK935L9Y2HrCY1tv5D64eUqt6uuF1gJz49-9M8oN2PPs-K\
+   sbYnf55jT9
+    CsyZe1Bgz9D-zIKvM8xv3Af40SBg~WyJKblB6UU4xRmZ3RlVXZjZFR1V6ZFpRIiwiYW\
+   lkIix7InRy
+    dXN0X3RpZXIiOiJkZWNsYXJlZCJ9XQ~WyJFMXNjOWNibGtkM2Z4OEtjMzZmQmdRIiwi\
+
+
+
+Drake                     Expires 28 April 2027                [Page 62]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   c3ViIiwidX
+    JuOmFpZDpnbG9iYWw6aWQtaGdzc3QtdmdjZngtcHdkdnctamtianEiXQ~
+   X-1ID-Contact-Token: 55b10d20
+   Hardware-Attestation: v=1;
+    typ=SFT;
+    alg=ES256;
+    h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+   ferences:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof:from:
+    to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+   s:
+    mime-version:content-type:content-transfer-encoding:hardware-trust-\
+   proof;
+    bh=SBrxyAzkA9Uw7luX3YEZSZrwdWg3z7t09dF6bOUJmPg;
+    ts=1793038949;
+    chain=MIIKnAYJKoZIhvcNAQcCoIIKjTCCCokCAQExDTALBglghkgBZQMEAgEwCwYJK\
+   oZIhvcNAQc
+    BoIIJsjCCAz0wggIloAMCAQICFAmaM7L9fC5Yr6VbXZPuLhshXIIsMA0GCSqGSIb3DQ\
+   EBCwUAMC4x
+    DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+   2MTAyNjE4M
+    jEwMFoXDTI3MTAyNjE4MjEwMFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+   YWlkOmdsb2
+    JhbDppZC1oZ3NzdC12Z2NmeC1wd2R2dy1qa2JqcTEjMCEGA1UEBRMaaWQtaGdzc3Qtd\
+   mdjZngtcHd
+    kdnctamtianEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQTmRe6uej6DxWgoopQEU\
+   WHphlj55oj
+    pDBpFsqEGe1ykL8Q6VAfNizd2prYWUCAHFecPQwSAiOvvDipx0j1BVnro4HkMIHhMDQ\
+   GA1UdEQQtM
+    CuGKXVybjphaWQ6Z2xvYmFsOmlkLWhnc3N0LXZnY2Z4LXB3ZHZ3LWprYmpxMAwGA1Ud\
+   EwEB/wQCMA
+    AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBS+ULkKnFcJ9KnyNalcVxIrLiOAzDAfB\
+   gNVHSMEGDA
+    WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAWBgorBgEEAYPUXwEBBAhkZWNsYXJlZDAiBg\
+   orBgEEAYPU
+    XwECBBQyMDI2LTEwLTI2VDE4OjIxOjAwWjAPBgorBgEEAYPUXwEDBAEAMA0GCSqGSIb\
+   3DQEBCwUAA
+    4IBAQC3KkO5fBaqECjxqkaeT8ap3AgxgNEMfO6GhiK/HtbggkswKRRTojB6VAy2bkdQ\
+   ToHpOnhq9l
+    7MOa/QToQxYx21l0T4lRRL7pohKH3691vO03eXDHq6LbYG/zBZqjqe9Nq8EoMLw7TvA\
+   hcyG4uVDRi
+    iiX1scAY4i8sE8exusc7VfjMjYTfPlA4yZ3znK91r4CItQjA2eieFmH4be5/vJKk0Rp\
+   O/WmiFIZyp
+    Mh/urMDyC9zSPtRMZq+UDjHqg9EC8NPE/Dh14+8yzdUO6kVydNSgSde7E0IKizIB/kw\
+   8Te3R9DV+f
+    ulavfv2c5iJz5fjL7vaxom02B43U6loSxukDFe7MIIDSDCCAjCgAwIBAgIUSEEYK28j\
+   6n6Vhr+w4P
+
+
+
+Drake                     Expires 28 April 2027                [Page 63]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    vDkiuyQbEwDQYJKoZIhvcNAQELBQAwJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xS\
+   UQgUm9vdCB
+    DQSBBMB4XDTI2MDMxNDE0MTM0N1oXDTMxMDMxMzE0MTM0N1owLjEMMAoGA1UECgwDMU\
+   lEMR4wHAYD
+    VQQDDBUxSUQgSW50ZXJtZWRpYXRlIENBIEEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwA\
+   wggEKAoIBA
+    QC554xsVDRUJ3fMEQISK3ayhz2DTFpHDMvhBP6MHqTt/116HDJNj+2qXJdAmVH8GdXz\
+   Mwm/tt9nrG
+    rx4Sd3vcdodwpUnF2DhVASZ8e2TiYYB9a4DLuPc3lOw+lwVOqCQmUDBSneQffINU+87\
+   WofNtWZQV2
+    8Oxy2HFDfFhU/WkI91ayiI/ihHQvQTJpqqZPAbYn+EjD+8AarBbHgKsyyDxW8oOmws8\
+   2nYhn8eRdz
+    7O3De2w9cpZouJMyWLxG9nwUSOxD3fc1+vbcMeoRmBLRADx9RmhrHOiB2HFW579bsqd\
+   kzwQ10/SM5
+    /SXmhSdwajxU/mnkGZCE/vcndtUzJ5B/twjAgMBAAGjZjBkMBIGA1UdEwEB/wQIMAYB\
+   Af8CAQAwDg
+    YDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRnIsB54FVyNiezRKLzTN+AXd+WrjAfBgNVH\
+   SMEGDAWgBT
+    Dt+lZdcVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1\
+   CQPPH9XGzk
+    J+09iAhUkC3lLNK+hWMpBZ+S2Hs8KVl4aMaZmD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCy\
+   MR43GAoCcA
+    ZyDsq9pyyfIfXbQO6+dPU0TffL+9HgY2qme8XN/vsOqWY3gEvxihrW9inVc16EeDv1i\
+   RLcWUZe5o3
+    uS7tZTdS6/bkSb1lu81t9nK8YZ62jxNY2SB9acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzd\
+   jS/Sal1/Rc
+    ATxrzjo8bn22feqeikJCaoq4lOK/kKBZfz9F0BGNVH95AjChp25bliGYQXMzPbiQuUn\
+   m6zqMdIYJg
+    /NtPzg6kujCCAyEwggIJoAMCAQICFGciMXFDNUuITsmdETPo+lhP0nQPMA0GCSqGSIb\
+   3DQEBCwUAM
+    CYxDDAKBgNVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQx\
+   NDEzNDdaGA
+    8yMDU2MDMwNjE0MTM0N1owJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vd\
+   CBDQSBBMII
+    BIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7\
+   kXquhEmyoZ
+    BED9/BkyzDsld4o3IyFdxvafrDu4e5YDzGIxjHgCvCvwUgbEZt6femOqSM91VPKMuBz\
+   MEq0rtHCz7
+    J/vS/nsfw3/NqgFN+j+q1HyHHVx+L3W8wQPWrVLqI2RUFPyU9oeZL6XKaaL0PNIwL2N\
+   xAKMuc5uQ/
+    BUPNjDsh7I4M5gD6X9WR/4ZEnvUd0slil8fJPLRjw6om2eq/kFl5pXW7mipdf2ufiYE\
+   Ic1lEBtf34
+    krCWM3PEvnl0Rs4eEirDirxx7PFP18GOgoNyaQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcI\
+   nRsTfdPQID
+    AQABo0UwQzASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4\
+   EFgQUw7fpW
+    XXFX/lGDy85m5SqTPkl8PAwDQYJKoZIhvcNAQELBQADggEBAAhRXzslG92koaKTfGR2\
+   KPZvOP3sxZ
+
+
+
+Drake                     Expires 28 April 2027                [Page 64]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+    vHBemfwb4tICwaegZlNtHztqP7qcLqWfsHG0Caob8e2rbjMjpPaMY81328kgl7goVPT\
+   Euq3Af5joZ
+    OArHfizgQl9r5RwT9G3y/AgDTnZDF6uUKt5P1u8PUd8t6dUANvIjMvqD6eV8ERioMu+\
+   BL7GpbDvy7
+    smvmsCpy1isY0aSlh112LGboJueGSbiMx35wMKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5i\
+   YcUEVptBZW
+    0Ik83sLXJdVG6Z745awnOAQnkriRwt2b0r/JRbmu7TQrzAv/K0PTXTuYf3DYxqCl04w\
+   8cpgEaPd5r
+    WG4yYxgbEwga4CAQEwRjAuMQwwCgYDVQQKDAMxSUQxHjAcBgNVBAMMFTFJRCBJbnRlc\
+   m1lZGlhdGU
+    gQ0EgQQIUCZozsv18LlivpVtdk+4uGyFcgiwwCwYJYIZIAWUDBAIBMAoGCCqGSM49BA\
+   MCBEgwRgIh
+    ANLrbmlEEOwGjYDJzi7poPc3+S/K2+AzxpTzt8Iteel/AiEA1F1GunBnmGAVenQDj8g\
+   n0a84jAUvI
+    rCZYXDSKgi8jRI=;
+    aid=urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq;
+    bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+   lwIjoiYWly
+    cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+   1zL2FnZW50
+    cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWhnc3N0LXZnY2Z4LXB3ZHZ3LWprYmp\
+   xIiwiaWF0I
+    joxNzkzMDM4OTQ3LCJleHAiOjE3OTMwNDI1NDcsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+   RUMiLCJjcn
+    YiOiJQLTI1NiIsIngiOiJFNWtYdXJuby1nOFZvS0tLVUJGRmg2WVpZLWVhSTZRd2FSY\
+   ktoQm50Y3B
+    BIiwieSI6InZ4RHBVQjgyTE4zYW10aFpRSUFjVjV3OURCSUNJNi04T0tuSFNQVUZXZX\
+   MifX0sImFp
+    ZCI6eyJ0cnVzdF90aWVyIjoiZGVjbGFyZWQifX0.0yr1M1LlfWJXMPj_uaplsn0FEne\
+   3G2U22Q0Y0
+    5cYbuHIt9ma1UTfR_CGJFdfjuusRg9AUsjTN3RQ3KdeV1oijw
+
+   Hardware-attested email from the AIRS reference implementation.
+   Identity tier: declared
+
+      Figure 5: Example 5: Declared-Tier Software Key (Combined Mode)
+
+A.6.  Verification Failure Examples
+
+   The following Authentication-Results fields were produced by the
+   verification command above (hw-attest-verify 3.0.0) for modified
+   copies of Example 5, and are folded here at whitespace.  Verifiers
+   should give similar diagnostics in the comment.
+
+   One character of the body changed after sending: the Mode 1 signature
+   no longer matches the recomputed attestation-input, and the
+   recomputed message-binding nonce differs from the one the Registrar
+   signed:
+
+
+
+Drake                     Expires 28 April 2027                [Page 65]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   Authentication-Results: mailpal.com; hw-attest=fail header.typ=SFT
+     header.alg=ES256 (Signature verification failed with the SignerInfo
+     signer certificate: Cryptographic signature does not match)
+   Authentication-Results: mailpal.com; hw-trust=fail
+     header.mode=identified header.tier=declared
+     header.issuer="https://1id.com/realms/agents"
+     header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq"
+     (Message-binding nonce mismatch: got
+     'xyOBmsF85eADHqyX15wgPDbus060ER7GQ7sS2sBhBzc', expected
+     'Fs5k4H-5uqYRR4wuu3ncjKZGFhn_TkoFql0CkiZA-gE')
+
+   The Hardware-Attestation field removed in transit: the SD-JWT carries
+   "cnf", so it is a Combined-mode presentation and is rejected without
+   its Mode 1 partner (Section 5.4):
+
+   Authentication-Results: mailpal.com; hw-trust=fail
+     header.mode=identified header.tier=declared
+     header.issuer="https://1id.com/realms/agents"
+     header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq" (SD-JWT
+     carries cnf Combined mode but the message has no
+     Hardware-Attestation field)
+
+   The optional "sub" disclosure withheld from the Hardware-Trust-Proof
+   field: Mode 1 fails because its "h" list covers that field, including
+   the disclosure selection.  With "--trust-hidden-issuer
+   https://1id.com/realms/agents" added to the command, Mode 2 is a
+   hidden-identity presentation from a trusted issuer, and it fails
+   together with the Mode 1 proof it depends on (Section 6):
+
+   Authentication-Results: mailpal.com; hw-attest=fail header.typ=SFT
+     header.alg=ES256 (Signature verification failed with the SignerInfo
+     signer certificate: Cryptographic signature does not match)
+   Authentication-Results: mailpal.com; hw-trust=fail header.mode=hidden
+     header.tier=declared header.issuer="https://1id.com/realms/agents"
+     (Combined mode: the Hardware-Attestation proof this presentation
+     depends on is fail Signature verification failed with the
+     SignerInfo signer certificate: Cryptographic signature does not
+     match)
+
+Appendix B.  Acknowledgments
+
+   The concept of using hardware attestation for email sender
+   verification was developed in the context of building a hardware
+   identity registrar for autonomous AI agents.  The author thanks the
+   Trusted Computing Group for the TPM 2.0 specification, the authors of
+   [RFC9901] (SD-JWT) for the selective disclosure mechanism, the
+   authors of [RFC9334] (RATS Architecture) for establishing the remote
+   attestation architecture that this document builds upon, and the
+
+
+
+Drake                     Expires 28 April 2027                [Page 66]
+
+Internet-Draft         Hardware Email Attestation           October 2026
+
+
+   authors of [RFC8141] (URN) for the persistent identifier framework
+   that underpins the federated agent identity model.
+
+Author's Address
+
+   Christopher Drake
+   1id.com
+   Australia
+   Email: cnd@1id.com
+   URI:   https://1id.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Drake                     Expires 28 April 2027                [Page 67]

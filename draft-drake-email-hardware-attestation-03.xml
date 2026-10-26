@@ -1,0 +1,2881 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-model href="urn:ietf:rfc:7991" type="application/relax-ng-compact-syntax"?>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude"
+     docName="draft-drake-email-hardware-attestation-03"
+     ipr="trust200902"
+     submissionType="IETF"
+     category="exp"
+     xml:lang="en"
+     version="3">
+
+  <front>
+    <title abbrev="Hardware Email Attestation">
+      Hardware Attestation for Email Sender Verification
+    </title>
+
+    <seriesInfo name="Internet-Draft" value="draft-drake-email-hardware-attestation-03"/>
+
+    <author fullname="Christopher Drake" initials="C." surname="Drake">
+      <organization>1id.com</organization>
+      <address>
+        <postal>
+          <country>Australia</country>
+        </postal>
+        <email>cnd@1id.com</email>
+        <uri>https://1id.com</uri>
+      </address>
+    </author>
+
+    <date year="2026" month="October" day="25"/>
+
+    <area>Security</area>
+    <workgroup/>
+
+    <keyword>hardware attestation</keyword>
+    <keyword>email</keyword>
+    <keyword>agent identity</keyword>
+    <keyword>AIRS</keyword>
+    <keyword>TPM</keyword>
+    <keyword>PIV</keyword>
+    <keyword>SD-JWT</keyword>
+
+    <abstract>
+  <t>
+    This document defines two email bindings for proving properties of an
+    automated sender using the durable identity and anchor architecture of
+    the Agent Identity Registry System (AIRS).  Mode 1 carries a detached
+    CMS signature made by a message-signing proof key.  It can provide
+    manufacturer-rooted hardware provenance, Registrar-backed AIRS identity
+    binding, or both.  Mode 2 carries a per-message SD-JWT that allows a
+    Registrar to assert selected properties without requiring disclosure of
+    the sender's canonical AIRS identifier.
+  </t>
+  <t>
+    The AIRS identity0 model, canonical <tt>aid</tt> identifier, trust tiers,
+    anchor semantics, enrollment rules, and Registrar trust boundary are
+    defined by <xref target="I-D.drake-agent-identity-problem-statement"/>
+    and <xref target="I-D.drake-agent-identity-registry"/>.  Authoritative
+    resolution of the current Registrar/OAuth issuer is defined by
+    <xref target="I-D.drake-agent-identity-resolution"/>.  This document
+    does not redefine those concepts; it defines how email messages bind to
+    and verify them.
+  </t>
+</abstract>
+  </front>
+
+  <middle>
+
+    <!-- ====================================================== -->
+    <section anchor="introduction">
+  <name>Introduction</name>
+  <t>
+    SPF <xref target="RFC7208"/>, DKIM <xref target="RFC6376"/>, and DMARC
+    <xref target="RFC9989"/> provide domain- and infrastructure-layer
+    authorization, authentication, alignment, and policy signals.  They do not
+    identify the autonomous actor that caused a message to be sent, nor do they
+    establish durable continuity of that actor across domains, providers,
+    credentials, or hardware changes.
+  </t>
+  <t>
+    The general motivation and the strict meaning of identity0 are defined
+    by <xref target="I-D.drake-agent-identity-problem-statement"/>.  AIRS
+    <xref target="I-D.drake-agent-identity-registry"/> supplies the durable
+    subject, enrolled anchor bindings, operational proof keys, trust tiers,
+    and Registrar trust boundary.  This specification applies that
+    foundation to email.  It deliberately does not define another identity
+    model, hardware taxonomy, enrollment ceremony, or reputation system.
+  </t>
+  <t>This document defines two application mechanisms:</t>
+  <ol>
+    <li><strong>Mode 1: Direct Hardware Attestation.</strong>  A
+    <tt>Hardware-Attestation</tt> header carries a detached CMS
+    <xref target="RFC5652"/> signature made by the Mode-1 signing key.
+    Manufacturer-rooted evidence can establish hardware provenance.  A
+    Registrar binding assertion can additionally authenticate a canonical
+    AIRS <tt>aid</tt> and trust tier.</li>
+    <li><strong>Mode 2: SD-JWT Trust Proof.</strong>  A
+    <tt>Hardware-Trust-Proof</tt> header carries a per-message SD-JWT
+    <xref target="RFC9901"/>.  The sender can disclose a canonical
+    <tt>aid</tt> for identified AIRS verification or withhold it and expose
+    only selected properties under receiver-local issuer policy.</li>
+  </ol>
+
+  <section anchor="design-principles">
+    <name>Application Design Principles</name>
+    <dl>
+      <dt>Canonical ownership</dt>
+      <dd>Identity0, canonical identifiers, trust tiers, anchor scarcity,
+      lifecycle, and Registrar accreditation are owned by the companion
+      specifications and are referenced rather than restated here.</dd>
+      <dt>Message binding</dt>
+      <dd>An attestation that is valid for one message MUST NOT be
+      transferable to different headers or body content.</dd>
+      <dt>Proof is not behavior</dt>
+      <dd>A valid proof says what actor/key/hardware property was verified;
+      it does not say that the message is benign, authorized for a business
+      action, or worthy of positive reputation.</dd>
+      <dt>Explicit trust path</dt>
+      <dd>Manufacturer-rooted evidence and Registrar-backed assertions are
+      different trust paths.  A verifier MUST know which path established a
+      result and MUST NOT silently treat Registrar verification as direct
+      manufacturer verification, or vice versa.</dd>
+      <dt>Privacy by application choice</dt>
+      <dd>Mode 1 is intentionally linkable when an <tt>aid</tt> or stable
+      proof key is exposed.  Mode 2 permits selective or pseudonymous
+      disclosure where the receiving policy does not require identity0
+      continuity.</dd>
+    </dl>
+  </section>
+
+  <section anchor="requirements-language">
+    <name>Requirements Language</name>
+    <t>The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+    "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+    "OPTIONAL" in this document are to be interpreted as described in BCP 14
+    <xref target="RFC2119"/> <xref target="RFC8174"/> when, and only when,
+    they appear in all capitals, as shown here.</t>
+  </section>
+
+  <section anchor="terminology">
+    <name>Terminology</name>
+    <t>Foundational identity and AIRS terms are used as defined in
+    <xref target="I-D.drake-agent-identity-problem-statement"/> and
+    <xref target="I-D.drake-agent-identity-registry"/>.</t>
+    <dl>
+      <dt>Manufacturer-rooted Mode 1</dt>
+      <dd>Mode 1 in which the message-signing proof key is authenticated by
+      evidence that the verifier validates to an accepted manufacturer or
+      attestation root.  This establishes hardware/key provenance; it does
+      not by itself establish AIRS identity binding.</dd>
+      <dt>Registrar-bound Mode 1</dt>
+      <dd>Mode 1 carrying a Registrar-signed binding assertion that binds a
+      canonical <tt>aid</tt>, the operational proof key, and the asserted
+      AIRS trust tier.</dd>
+      <dt>Identified Mode 2</dt>
+      <dd>A Mode-2 presentation that discloses canonical <tt>sub</tt> and is
+      therefore verified against that identity's authoritative current
+      issuer.</dd>
+      <dt>Hidden-identity Mode 2</dt>
+      <dd>A Mode-2 presentation that withholds <tt>sub</tt>.  It is an
+      issuer property assertion under receiver-local issuer policy, not
+      proof of current sponsorship or identity0 continuity.</dd>
+    </dl>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="applicability">
+  <name>Applicability</name>
+  <t>This specification is intended for autonomous or automated senders for
+  which a receiver benefits from durable actor continuity, verified hardware
+  provenance, or a Registrar-backed property assertion.  It does not require
+  every process, model invocation, container, or message-generation instance
+  to have a separate identity0; the identity boundary is the independently
+  accountable actor defined by the Problem Statement.</t>
+</section>
+<!-- ====================================================== -->
+    <section anchor="architecture">
+  <name>Email Binding Architecture</name>
+  <t>The canonical AIRS architecture is defined by
+  <xref target="I-D.drake-agent-identity-registry"/>.  This section states
+  only the mappings required to interpret the email wire formats.</t>
+
+  <section anchor="agent-identity-format">
+    <name>Canonical Identifier Use</name>
+    <t>When this document carries an AIRS identity identifier, it carries
+    the permanent canonical <tt>aid</tt> (a URN, <xref target="RFC8141"/>)
+    defined by the Registry specification, for example the documentation
+    identifier <tt>urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg</tt>, which
+    never resolves.  A handle MUST NOT be used in the <tt>aid</tt> parameter
+    or the Mode-2 <tt>sub</tt> claim because verification and long-lived
+    state require the canonical identifier.</t>
+    <t>An <tt>aid</tt> in the Registry's test namespace
+    (<tt>urn:aid:test:</tt>) carries no production assurance.  A verifier
+    applying production policy MUST report it as <tt>policy</tt>, and MUST
+    NOT report a tier or <tt>aid</tt> property for it.</t>
+  </section>
+
+  <section anchor="hw-mechanisms">
+    <name>Email Mechanism Type Mapping</name>
+    <t>The <tt>typ</tt> values in Mode 1 are application mappings to the
+    Registry-owned mechanism/tier definitions.  They do not create an
+    independent hardware taxonomy:</t>
+    <table>
+      <thead><tr><th>typ</th><th>Registry tier when Registrar-bound</th><th>Application mechanism</th></tr></thead>
+      <tbody>
+        <tr><td>TPM</td><td>sovereign</td><td>Physical TPM-backed proof key</td></tr>
+        <tr><td>PIV</td><td>portable</td><td>Physical PIV/token-backed proof key</td></tr>
+        <tr><td>ENC</td><td>enclave</td><td>Enclave-class proof key</td></tr>
+        <tr><td>VRT</td><td>virtual</td><td>Virtual/infrastructure protected key</td></tr>
+        <tr><td>SFT</td><td>declared</td><td>Software-managed proof key</td></tr>
+      </tbody>
+    </table>
+    <t>For Registrar-bound Mode 1, the asserted AIRS tier MUST match this
+    mapping and the verifier MUST apply the assurance semantics defined by the
+    Registry specification.  Manufacturer-rooted Mode 1 uses <tt>typ</tt> only
+    to identify the mechanism whose provenance was verified; without a
+    Registrar binding it MUST NOT be reported as an AIRS tier.  In particular,
+    <tt>ENC</tt> and <tt>VRT</tt> do not acquire a one-physical-unit-per-identity
+    scarcity property merely because the key is hardware backed.  An
+    <tt>ENC</tt> binding gives continuity of control of the key, not proof
+    of how the key is held (see the enclave tier in the Registry
+    specification); this document adds no stronger claim.</t>
+  </section>
+
+  <section anchor="issuer-discovery">
+    <name>Authoritative Registrar Key Discovery</name>
+    <t>Whenever a presentation discloses a canonical <tt>aid</tt>, the verifier
+    MUST resolve that identifier using
+    <xref target="I-D.drake-agent-identity-resolution"/> and obtain its
+    authoritative <tt>currentIssuer</tt>.  If the identity has no current
+    authorized issuer, Registrar-backed verification fails.  A verifier MAY
+    satisfy this step from a cached resolution result that is within the
+    bound given by the Resolution specification; the freshness of the
+    Registrar's assertion is carried by its <tt>exp</tt>, so a new lookup
+    for every message is not required.</t>
+    <t>The verifier then obtains OAuth Authorization Server Metadata for that
+    exact issuer as specified by <xref target="RFC8414"/>.  An issuer used
+    with this Email profile MUST publish <tt>jwks_uri</tt>.  The metadata
+    <tt>issuer</tt> value MUST exactly equal <tt>currentIssuer</tt>; otherwise
+    the metadata MUST NOT be used.  Absence of <tt>jwks_uri</tt> is a permanent
+    verification error.  Registrar signing keys are obtained only from that
+    authenticated JWK Set.  A token, certificate, or JWS supplied
+    by the sender MUST NOT bootstrap its own issuer authority.</t>
+    <t>For hidden-identity Mode 2 there is intentionally no per-identity
+    resolution step.  The receiver first decides by local policy that the
+    visible <tt>iss</tt> value is an issuer it trusts for the asserted
+    property; only then may it use RFC 8414 discovery for that issuer.  Such
+    a result does not establish current sponsorship of an undisclosed AIRS
+    identity.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="direct-attestation">
+  <name>Mode 1: Direct Hardware Attestation</name>
+  <t>Mode 1 binds the email to a message-signing proof key with a detached CMS
+  SignedData signature.  The same wire format supports two distinct trust
+  paths: manufacturer-rooted key provenance and Registrar-backed AIRS
+  identity binding.</t>
+
+  <section anchor="attestation-chain">
+    <name>Evidence Profiles</name>
+    <t>The CMS signer certificate carries the public key corresponding to the
+    Mode-1 signing key.  Trust in that key is established by one or both
+    of the following profiles:</t>
+    <dl>
+      <dt>Manufacturer-rooted</dt>
+      <dd>The signer certificate or other mechanism-specific certificate path
+      carried in SignedData directly authenticates the message-signing proof
+      key to a manufacturer or attestation root accepted by the verifier.
+      The verifier MUST ensure the evidence actually binds that same proof key
+      and is consistent with <tt>typ</tt>.  A manufacturer certificate for a
+      different device key is insufficient.  For example, a TPM EK
+      certificate alone does not prove that an arbitrary AK that signed the
+      message is resident in that TPM.  Where no standardized direct evidence
+      binds the signing key to the manufacturer-rooted device, this profile is
+      unavailable and the Registrar-bound profile is used.
+      A mechanism has a manufacturer-rooted profile only where a published
+      specification defines evidence that binds a signing key to the device;
+      an implementation MUST NOT invent such evidence and report it as this
+      profile.  This version of the document names no such profile, so
+      Mode 1 is Registrar-bound until one is named, with its format
+      reference and test vectors, by a later revision.</dd>
+      <dt>Registrar-bound</dt>
+      <dd>The header carries both <tt>aid</tt> and <tt>bind</tt>.  The
+      <tt>bind</tt> value is a compact JWS whose payload binds the canonical
+      <tt>aid</tt>, the exact operational proof public key, and the AIRS trust
+      tier.  It is signed by the identity's authoritative current Registrar
+      and verified using <xref target="issuer-discovery"/>.  The verifier
+      relies on that Registrar to have performed the Registry-defined
+      enrollment checks for the asserted tier.</dd>
+    </dl>
+    <t>A proof MAY satisfy both profiles when manufacturer evidence and a
+    current Registrar binding assertion authenticate the same operational
+    proof key.  These are then independent evidence paths only to the extent
+    that their trust anchors are actually independent.</t>
+  </section>
+
+  <section anchor="header-format">
+    <name>Header Field and CMS Profile</name>
+    <artwork type="abnf">
+Hardware-Attestation = "Hardware-Attestation" ":"
+                       hw-attest-value CRLF
+
+; The tag layout follows the tag-spec convention of RFC 6376
+; Section 3.2, which DKIM2 also reuses, so a DKIM tag-list
+; tokenizer can be reused to split this field.  Unlike a generic
+; DKIM tag-list, the tag order here is fixed and no extension
+; tags are defined.
+
+hw-attest-value = hw-version ";" hw-type ";" hw-algorithm
+                  ";" hw-signed-hdrs ";" hw-body-hash
+                  ";" hw-timestamp ";" hw-chain
+                  [";" hw-aid ";" hw-bind]
+                  [";"] [FWS]
+
+hw-version     = [FWS] %s"v"     [FWS] "=" [FWS] "1"           [FWS]
+hw-type        = [FWS] %s"typ"   [FWS] "=" [FWS] mech-code     [FWS]
+hw-algorithm   = [FWS] %s"alg"   [FWS] "=" [FWS] alg-code      [FWS]
+hw-signed-hdrs = [FWS] %s"h"     [FWS] "=" [FWS] folded-hdrs   [FWS]
+hw-body-hash   = [FWS] %s"bh"    [FWS] "=" [FWS] folded-b64url [FWS]
+hw-timestamp   = [FWS] %s"ts"    [FWS] "=" [FWS] folded-digits [FWS]
+hw-chain       = [FWS] %s"chain" [FWS] "=" [FWS] folded-base64 [FWS]
+hw-aid         = [FWS] %s"aid"   [FWS] "=" [FWS] folded-urn    [FWS]
+hw-bind        = [FWS] %s"bind"  [FWS] "=" [FWS] folded-jws    [FWS]
+
+mech-code      = %s"TPM" / %s"PIV" / %s"ENC" / %s"VRT" / %s"SFT"
+alg-code       = %s"RS256" / %s"ES256" / %s"PS256"
+
+; Every tag value MAY carry internal folding whitespace, which is
+; not part of the value.  The comment beside each production gives
+; what that value MUST match once the whitespace has been removed.
+
+folded-hdrs    = 1*(hdr-name-char / ":" / WSP / FWS)
+                     ; -&gt; hdr-name *(":" hdr-name)
+folded-b64url  = 1*(b64url-char / WSP / FWS)
+                     ; -&gt; 1*b64url-char
+folded-digits  = 1*(DIGIT / WSP / FWS)
+                     ; -&gt; ts-value
+folded-base64  = 1*(b64-char / WSP / FWS)
+                     ; -&gt; 1*b64-char
+folded-urn     = 1*(urn-char / WSP / FWS)
+                     ; -&gt; aid-urn
+folded-jws     = 1*(b64url-char / "." / WSP / FWS)
+                     ; -&gt; compact-jws
+
+compact-jws    = base64url "." base64url "." base64url
+base64url      = 1*b64url-char
+b64url-char    = ALPHA / DIGIT / "-" / "_"
+b64-char       = ALPHA / DIGIT / "+" / "/" / "="
+urn-char       = ALPHA / DIGIT / "-" / ":"
+hdr-name       = 1*hdr-name-char
+hdr-name-char  = ALPHA / DIGIT / "-"
+ts-value       = "0" / (%x31-39 *19DIGIT)   ; no leading zeros
+aid-urn        = &lt;canonical aid URN defined by the AIRS Registry&gt;
+FWS            = &lt;FWS defined by RFC 6376 Section 2.8&gt;
+WSP            = &lt;WSP defined by RFC 5234&gt;
+    </artwork>
+    <t>The grammar is ABNF <xref target="RFC5234"/>, with <tt>%s</tt>
+    marking a case-sensitive string <xref target="RFC7405"/>.
+    <tt>base64url</tt> and <tt>base64</tt> use the encodings of
+    <xref target="RFC4648"/>; <tt>base64url</tt> is emitted without padding.
+    Parameter names in a generated field MUST use the lowercase forms shown
+    above, and the tags MUST appear in the order shown.  A single trailing
+    semicolon after the last tag is OPTIONAL: a generator MAY emit it, and a
+    verifier MUST accept the field with or without it.  This version defines
+    no extension tags.  Unlike a generic DKIM tag-list, an unrecognized tag
+    name MUST cause the field to be treated as malformed rather than being
+    ignored, because the signed reconstruction below has to be reproducible
+    byte-for-byte by every verifier and cannot carry content the verifier
+    does not understand.  A header name that contains a character outside
+    <tt>hdr-name-char</tt> cannot be listed in <tt>h</tt>.  A <tt>ts</tt>
+    value greater than 18446744073709551615 is malformed
+    (<tt>permerror</tt>).</t>
+
+    <t>CMS objects, compact JWS values, and long header-name lists all
+    exceed one physical email line, so every tag value in this field other
+    than the single-token <tt>v</tt>, <tt>typ</tt>, and <tt>alg</tt> values
+    MAY carry internal folding whitespace.  No value defined here can contain
+    significant whitespace, so this specification applies to all of its tags
+    the rule that <xref target="RFC6376"/> states for the DKIM <tt>b=</tt>
+    and <tt>bh=</tt> tag values: WSP and FWS appearing anywhere inside a tag
+    value is not part of that value and MUST be removed in its entirety
+    before the value is decoded, parsed, or compared.  Folding whitespace
+    MAY therefore be inserted at any point within a tag value solely to
+    satisfy header-field line-length requirements, including inside a base64
+    or compact-JWS token and inside a header field name in the <tt>h</tt>
+    list.  Deployed signers are observed to fold header-name lists in
+    mid-token in exactly this way, so a verifier that accepts folding only
+    at separator boundaries will reject otherwise valid mail.  Whitespace
+    inside a tag <em>name</em> is not permitted.  RFC 5322 unfolding alone
+    is not sufficient for this purpose because it removes the folding CRLF
+    but leaves the following WSP.  Therefore, whether a parser receives the
+    raw folded field or an already-unfolded field, it MUST perform this
+    removal before interpreting any value.  After removal, each value MUST
+    match the post-removal production shown beside its production above; in
+    particular the <tt>bind</tt> value MUST match <tt>compact-jws</tt> and
+    the <tt>h</tt> value MUST match <tt>hdr-name *(":" hdr-name)</tt>.</t>
+
+    <t><tt>aid</tt> and <tt>bind</tt> either both appear or both are absent.  A
+    sender MUST NOT place an <tt>aid</tt> in Mode 1 without the Registrar
+    binding assertion required below.</t>
+    <dl>
+      <dt>v</dt><dd>Protocol version; exactly <tt>1</tt>.</dd>
+      <dt>typ</dt><dd>The application mechanism code from
+      <xref target="hw-mechanisms"/>.  The value is message-signed and MUST
+      match the verified evidence or Registrar assertion.</dd>
+      <dt>alg</dt><dd>A compact label for the CMS signer algorithm, mapped
+      normatively by <xref target="mode1-cms-algorithms"/>.  The JOSE-style
+      labels identify the algorithm choice only; CMS signature-value encoding
+      follows the cited CMS specifications, not JOSE encoding.  New
+      deployments SHOULD prefer PS256 for RSA or ES256 for P-256.</dd>
+      <dt>h</dt><dd>A colon-separated DKIM-style list of header field names.
+      The signer MUST include at least From, To, Cc, Subject, Date,
+      Message-ID, Sender, Reply-To, In-Reply-To, References, MIME-Version,
+      Content-Type, and Content-Transfer-Encoding, whether or not each is
+      present: under the DKIM rules a listed field that is absent protects
+      against its later addition, and these fields change how the message is
+      displayed or answered.  Header selection and repeated-name processing
+      follow the DKIM <tt>h=</tt> conventions of <xref target="RFC6376"/>.
+      The Hardware-Attestation field itself MUST NOT appear in <tt>h</tt>;
+      it is implicitly appended last as described below.  In Combined mode
+      the signer MUST also include Hardware-Trust-Proof.</dd>
+      <dt>bh</dt><dd>Base64url-encoded SHA-256 of the email body after DKIM
+      simple body canonicalization.</dd>
+      <dt>ts</dt><dd>Unix time at which the Mode-1 signature was created,
+      serialized as unsigned decimal without leading zeroes.  Freshness is
+      receiver policy; it is not an identity lifetime.</dd>
+      <dt>chain</dt><dd>Base64-encoded CMS SignedData as profiled below.</dd>
+      <dt>aid</dt><dd>The canonical AIRS identifier.  It is present only with
+      <tt>bind</tt> and MUST equal the binding JWS <tt>sub</tt> claim.</dd>
+      <dt>bind</dt><dd>A compact Registrar binding JWS as profiled in
+      <xref target="mode1-registrar-binding"/>.</dd>
+    </dl>
+
+    <t>The message input is constructed as follows:</t>
+    <artwork>
+attestation-input = label || h-hash || bh-raw || ts-bytes
+
+label    = "AIRS-Email-Mode1-v1" || 0x00     ; 20 bytes
+h-hash   = SHA-256(canonicalized-headers)  ; 32 bytes
+bh-raw   = SHA-256(canonicalized body)     ; 32 bytes
+ts-bytes = big-endian uint64(ts)           ; 8 bytes
+    </artwork>
+    <t>The <tt>attestation-input</tt> is exactly 92 octets: the 20-octet
+    label and 72 octets of digests and time.  For <tt>h-hash</tt>, the
+    headers named by <tt>h</tt> are selected using the DKIM header-selection
+    rules and canonicalized with DKIM relaxed header canonicalization, each
+    followed by CRLF.  A Hardware-Trust-Proof field named in <tt>h</tt> is
+    the one exception: like the Hardware-Attestation field below, its name
+    is lowercased, it is unfolded, and every WSP character anywhere in its
+    value is deleted, so that no legal refolding in transit changes the
+    signed input.  The Hardware-Attestation field
+    itself is then appended using the signature canonicalization that
+    <xref target="I-D.ietf-dkim-dkim2-spec"/> applies to its own
+    signature-bearing fields: the field name is lowercased to
+    <tt>hardware-attestation</tt>, the field is unfolded, every WSP character
+    anywhere in the field value is deleted, the <tt>chain</tt> tag value is
+    replaced by the empty string (the <tt>chain=</tt> tag itself remains), and
+    the result is followed by CRLF.  A verifier applies this to the field as
+    received; a generator applies it to the field it emits, which MUST use the
+    lowercase tag names and fixed order of the ABNF above.  All other tag
+    values, including <tt>aid</tt> and the compact <tt>bind</tt> JWS, remain
+    covered.  Because only whitespace is removed, every legal folding of the
+    field, and any legal RFC 5322 refolding applied in transit, produces the
+    same signed input.</t>
+    <t>The <tt>chain</tt> CMS object MUST use SignedData
+    <xref target="RFC5652"/> with <tt>encapContentInfo</tt> present,
+    <tt>eContentType</tt> equal to <tt>id-data</tt>, and <tt>eContent</tt>
+    omitted.  The externally supplied detached content is the exact 92-octet
+    <tt>attestation-input</tt>; implementations MUST NOT pre-hash that value
+    and then present the digest to CMS as though it were the content.
+    SignerInfo <tt>signedAttrs</tt> MUST be absent in version 1, so the CMS
+    signature/digest processing is unambiguous.  The CMS
+    <tt>digestAlgorithm</tt> is SHA-256 and the SignerInfo
+    <tt>signatureAlgorithm</tt> MUST match the <tt>alg</tt> mapping in
+    <xref target="mode1-cms-algorithms"/>.  The SignedData certificates field
+    MUST contain the signer certificate.  It MAY also contain certificates
+    needed by a manufacturer-rooted evidence path.  In the Registrar-bound
+    path the signer certificate is only a carrier for the operational proof
+    public key.  It MAY be self-signed or otherwise untrusted as a certificate
+    path; the verifier's authority for the <tt>aid</tt>-to-key binding comes
+    from <tt>bind</tt>, not from trusting that certificate's issuer.</t>
+  </section>
+
+  <section anchor="mode1-cms-algorithms">
+    <name>CMS Algorithm Mapping</name>
+    <t>Version 1 supports exactly the following mappings.  Implementations
+    MUST reject a mismatch between <tt>alg</tt>, SignerInfo
+    <tt>digestAlgorithm</tt>, SignerInfo <tt>signatureAlgorithm</tt>, its
+    parameters, and the signer public-key type.</t>
+    <table>
+      <thead><tr><th>alg</th><th>CMS signatureAlgorithm</th><th>Requirements</th></tr></thead>
+      <tbody>
+        <tr><td>RS256</td><td>sha256WithRSAEncryption<br/>1.2.840.113549.1.1.11</td>
+        <td>RSASSA-PKCS1-v1_5 with SHA-256 as specified by
+        <xref target="RFC5754"/>.  AlgorithmIdentifier parameters are NULL
+        when generated; receivers also accept absent parameters as required
+        by RFC 5754.  RFC 5754 adopts the RSA conventions of
+        <xref target="RFC3370"/>, under which CMS implementations support the
+        rsaEncryption signature identifier (1.2.840.113549.1.1.1, NULL
+        parameters) that many CMS libraries generate, so receivers MUST also
+        accept rsaEncryption as the SignerInfo signatureAlgorithm for
+        RS256.</td></tr>
+        <tr><td>ES256</td><td>ecdsa-with-SHA256<br/>1.2.840.10045.4.3.2</td>
+        <td>ECDSA using the P-256 curve and SHA-256 under the CMS conventions
+        of <xref target="RFC5754"/>.  AlgorithmIdentifier parameters MUST be
+        absent.  The CMS signature value is the DER ECDSA-Sig-Value
+        representation; it is not the JOSE raw <tt>R || S</tt>
+        representation.</td></tr>
+        <tr><td>PS256</td><td>id-RSASSA-PSS<br/>1.2.840.113549.1.1.10</td>
+        <td>RSASSA-PSS under <xref target="RFC4056"/> with SHA-256,
+        MGF1 with SHA-256, salt length 32 octets, and trailerField 1.  The
+        AlgorithmIdentifier parameters MUST encode those choices.</td></tr>
+      </tbody>
+    </table>
+    <t>For all three mappings, SignerInfo <tt>digestAlgorithm</tt> and the
+    SignedData <tt>digestAlgorithms</tt> set MUST identify SHA-256.</t>
+  </section>
+
+  <section anchor="mode1-registrar-binding">
+    <name>Registrar Binding JWS</name>
+    <t>A Registrar-bound Mode-1 message carries a compact JWS in
+    <tt>bind</tt>.  Its payload is a JWT <xref target="RFC7519"/> with the
+    following claims:</t>
+    <dl>
+      <dt>iss</dt><dd>REQUIRED.  The Registrar OAuth issuer URI.</dd>
+      <dt>sub</dt><dd>REQUIRED.  The same canonical <tt>aid</tt> carried by
+      the Hardware-Attestation header.</dd>
+      <dt>iat</dt><dd>REQUIRED.  Binding-assertion issuance time.  A verifier
+      MUST reject a value materially in the future.</dd>
+      <dt>exp</dt><dd>REQUIRED.  Expiration time, which MUST be later than
+      <tt>iat</tt>.  A verifier MUST NOT accept an expired binding assertion,
+      subject only to normal small clock-skew allowance.</dd>
+      <dt>cnf</dt><dd>REQUIRED.  A confirmation object
+      <xref target="RFC7800"/> containing <tt>jwk</tt> for the exact public
+      key in the CMS signer certificate.</dd>
+      <dt>aid</dt><dd>REQUIRED.  The Registry-defined AIRS claim object.  Its
+      <tt>trust_tier</tt> member reports the tier of this enrolled proof
+      binding.  Email does not redefine the tier values.</dd>
+    </dl>
+    <t>The binding JWT is a JWS using compact serialization
+    <xref target="RFC7515"/>.  Its protected header MUST contain
+    <tt>alg</tt>, <tt>kid</tt>, and <tt>typ</tt>.  The <tt>typ</tt> value MUST
+    be <tt>airs-email-binding+jwt</tt>, denoting
+    <tt>application/airs-email-binding+jwt</tt> as registered by
+    <xref target="iana-media-types"/>; verifiers MUST reject another type.
+    This explicit profile separation follows the cross-JWT confusion guidance
+    of <xref target="RFC8725"/>.  <tt>alg</tt> MUST select an asymmetric
+    digital-signature algorithm acceptable for the selected public key;
+    <tt>none</tt> and symmetric-MAC algorithms MUST NOT be accepted.  The
+    verifier resolves the header <tt>aid</tt>, obtains
+    <tt>currentIssuer</tt>, and performs <xref target="issuer-discovery"/>.
+    The JWS <tt>iss</tt> MUST exactly equal <tt>currentIssuer</tt>; the
+    <tt>kid</tt> MUST select a signing-capable public key in that issuer's
+    authenticated JWK Set; the selected key and <tt>alg</tt> MUST satisfy the
+    algorithm-validation requirements of <xref target="RFC8725"/>; the JWS
+    signature MUST verify; <tt>iat</tt> and <tt>exp</tt> MUST satisfy the time
+    requirements above; and <tt>sub</tt> MUST equal the header <tt>aid</tt>.  To compare <tt>cnf.jwk</tt> with the
+    CMS signer public key, the verifier converts the signer public key to its
+    public JWK representation and requires equal JWK thumbprints as defined
+    by <xref target="RFC7638"/>.  The <tt>cnf.jwk</tt> value MUST NOT contain
+    private key parameters.  Finally, <tt>aid.trust_tier</tt> MUST correspond
+    to <tt>typ</tt> according to <xref target="hw-mechanisms"/>.</t>
+    <t>The binding JWS is not the email message signature.  It is reusable
+    until expiration; possession of it does not let an attacker send a valid
+    message because the CMS signature still requires the enrolled operational
+    proof private key.  Registrars SHOULD keep its lifetime short enough that
+    retirement or compromise of a proof binding does not leave a long-lived
+    stale assertion, and receivers MAY impose a local maximum assertion age in
+    addition to enforcing <tt>exp</tt>.  Expiration determines whether the
+    Registrar binding is currently acceptable; it does not retroactively
+    alter the cryptographic integrity of a stored email.  A verifier that
+    finds the assertion expired reports <tt>policy</tt>, with the cause in
+    the comment, not <tt>fail</tt>: the CMS signature verified, and the
+    Registrar's assertion was no longer current when checked.  Registrars
+    that issue binding assertions for mail SHOULD choose a lifetime long
+    enough for ordinary queueing and greylisting retries; the examples use
+    one hour, whereas the five minutes that is the Registry's baseline for
+    interactive access tokens is not a mail requirement.  A trusted
+    receiving system can preserve
+    a receipt-time verification result in Authentication-Results, optionally
+    protected by ARC, when later archival processing needs to distinguish
+    those two questions.</t>
+  </section>
+
+  <section anchor="verification-algorithm">
+    <name>Verification Algorithm</name>
+    <t>A verifier processes Hardware-Attestation as follows:</t>
+    <ol>
+      <li>Require exactly one Hardware-Attestation field and no more than
+      one instance of each always-covered field listed for <tt>h</tt> in
+      <xref target="header-format"/>.  Reject duplicates, unsupported
+      versions, malformed encodings, an <tt>aid</tt> without <tt>bind</tt>,
+      or a <tt>bind</tt> without <tt>aid</tt> as <tt>permerror</tt>.</li>
+      <li>Verify that <tt>h</tt> covers the required fields; reconstruct
+      <tt>h-hash</tt>; recompute the canonical body hash and require exact
+      equality with <tt>bh</tt>.</li>
+      <li>Apply local freshness policy to <tt>ts</tt>.  A stale but otherwise
+      cryptographically valid proof is a policy outcome, not a forged
+      signature.  The first trusted receiving MTA SHOULD record its decision
+      in Authentication-Results for later use.</li>
+      <li>Decode SignedData, require the detached-CMS profile of
+      <xref target="header-format"/>, supply the exact
+      <tt>attestation-input</tt> as external content, and verify the CMS
+      signature with the signer certificate public key.</li>
+      <li>If the verifier evaluates a manufacturer-rooted result, validate
+      the signer key's manufacturer/attestation evidence under its current
+      accepted-root policy.  The evidence MUST directly establish the
+      relationship to the same signer public key and MUST be consistent with
+      <tt>typ</tt>.  Failure is <tt>fail</tt>.</li>
+      <li>If <tt>aid</tt> is present, verify the Registrar binding JWS exactly
+      as specified in <xref target="mode1-registrar-binding"/>.  If the AIRS
+      identity has no current issuer, the issuer differs, or the assertion no
+      longer validates, AIRS identity verification fails even if the CMS
+      message signature itself is valid.</li>
+      <li>Record which trust path(s) succeeded.  Report <tt>pass</tt> only
+      if at least one path succeeded and every path the verifier evaluated
+      succeeded; a valid CMS signature with no successful path (for example
+      a self-signed signer certificate with no <tt>bind</tt> and no accepted
+      manufacturer evidence) is reported as <tt>policy</tt>, because nothing
+      has established the property that <tt>typ</tt> claims.  A
+      manufacturer-only result MUST NOT report an authenticated
+      <tt>aid</tt>.  A Registrar-bound result MAY report the verified
+      <tt>aid</tt> and asserted trust tier.  The verifier then applies its
+      own authorization, reputation, and mail policy.</li>
+    </ol>
+  </section>
+
+  <section anchor="auth-results">
+    <name>Authentication-Results Integration</name>
+    <artwork>
+Authentication-Results: mx.example.com;
+  hw-attest=pass
+    header.typ=TPM
+    header.alg=PS256
+    header.path=registrar
+    header.tier=sovereign
+    header.aid="urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg"
+    </artwork>
+    <t>The <tt>hw-attest</tt> method and its result names/properties are
+    registered by <xref target="iana-considerations"/>.
+    <tt>tier</tt> and <tt>aid</tt> are reported only when Registrar binding
+    verification succeeded.  <tt>path</tt> reports which path succeeded:
+    <tt>manufacturer</tt>, <tt>registrar</tt>, or <tt>both</tt>.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="sd-jwt-proof">
+  <name>Mode 2: SD-JWT Trust Proof</name>
+  <t>Mode 2 carries a per-message SD-JWT <xref target="RFC9901"/> signed by a
+  Registrar.  It allows a sender to disclose the AIRS trust tier while
+  withholding the canonical identity when receiver policy does not require
+  continuity.</t>
+
+  <section anchor="sd-jwt-overview">
+    <name>Trust Semantics</name>
+    <t>The Registrar has already verified the enrollment evidence for the
+    active binding and is the trust boundary for the asserted AIRS tier.
+    Recipients do not revalidate manufacturer chains in Mode 2.</t>
+    <t>If canonical <tt>sub</tt> is disclosed, the presentation is identified:
+    the verifier MUST resolve that <tt>aid</tt>, obtain
+    <tt>currentIssuer</tt>, and require the SD-JWT <tt>iss</tt> to equal it.
+    If <tt>sub</tt> is hidden, the verifier cannot perform that per-identity
+    check.  It can only decide that it trusts the visible issuer, under local
+    policy, to make the disclosed property assertion.  Hidden Mode 2 MUST NOT
+    be described as proof of current sponsorship, durable identity continuity,
+    or an identity reputation key.</t>
+  </section>
+
+  <section anchor="sd-jwt-header">
+    <name>Header Field and Claims</name>
+    <artwork type="abnf">
+Hardware-Trust-Proof = "Hardware-Trust-Proof" ":"
+                       folded-sd-jwt CRLF
+
+folded-sd-jwt        = 1*(sd-jwt-char / WSP / FWS)
+                           ; -&gt; 1*sd-jwt-char
+sd-jwt-char          = ALPHA / DIGIT / "-" / "_" / "." / "~"
+; FWS and WSP are as declared in the Mode 1 grammar.
+    </artwork>
+    <t>The serialized <tt>Hardware-Trust-Proof</tt> value uses the same
+    whitespace-removal semantics as the DKIM <tt>b=</tt> and <tt>bh=</tt>
+    tag values of <xref target="RFC6376"/> and as the Mode-1 tag values of
+    <xref target="header-format"/>.  WSP and FWS MAY be inserted at
+    arbitrary positions solely to satisfy header-field line-length
+    requirements.  Such whitespace is not part of the SD-JWT serialization
+    and MUST be removed in its entirety before parsing the resulting SD-JWT
+    presentation according to
+    <xref target="RFC9901"/>.  RFC 5322 unfolding alone is not sufficient for
+    this purpose because it removes the folding CRLF but leaves the following
+    WSP.  Therefore, whether a parser receives the raw folded field or an
+    already-unfolded field, it MUST remove all such whitespace before SD-JWT
+    parsing.  No Key Binding JWT
+    is used in ordinary Mode 2.  The Issuer-signed JWS protected header MUST
+    contain <tt>alg</tt>, <tt>kid</tt>, and <tt>typ</tt>; <tt>typ</tt> MUST be
+    <tt>airs-email+sd-jwt</tt>, denoting
+    <tt>application/airs-email+sd-jwt</tt> as registered by
+    <xref target="iana-media-types"/>, and another type MUST be rejected.
+    The signing algorithm MUST satisfy <xref target="RFC8725"/> and MUST be
+    an asymmetric digital-signature algorithm; <tt>none</tt> and symmetric-MAC
+    algorithms MUST NOT be accepted.  The Issuer-signed payload MUST contain
+    <tt>iss</tt>, <tt>iat</tt>, <tt>nonce</tt>, and the SD-JWT disclosure
+    structures required by <xref target="RFC9901"/>.
+    <tt>iss</tt>, <tt>iat</tt>, and <tt>nonce</tt> MUST NOT be selectively
+    disclosable because they are required before or during verification.
+    <tt>exp</tt> is OPTIONAL; when present it likewise MUST NOT be selectively
+    disclosable, has normal JWT semantics, and an expired token MUST NOT be
+    accepted as currently valid.</t>
+    <t>This profile reuses the Registry-defined <tt>aid</tt> claim object rather
+    than defining a second trust-tier claim.  The following values are
+    selectively disclosable:</t>
+    <dl>
+      <dt>aid.trust_tier</dt><dd>The Registry-defined tier of the binding the
+      Registrar authenticated for this issuance.  Every Mode-2 presentation
+      conforming to this specification MUST disclose this member.</dd>
+      <dt>sub</dt><dd>The permanent canonical AIRS <tt>aid</tt>.  Disclosure
+      changes verification from hidden-identity to identified Mode 2.</dd>
+    </dl>
+    <t>In this profile the <tt>aid</tt> object contains only
+    <tt>trust_tier</tt>.  An issuer MUST NOT add <tt>handle</tt>,
+    <tt>hardware_locked</tt>, or any other member to it, so that a
+    presentation which withholds <tt>sub</tt> discloses no unique or
+    identifying value.</t>
+    <t>Outside Combined mode the Issuer-signed payload MUST omit <tt>cnf</tt>.
+    For Combined mode, it MUST instead contain a non-selectively-disclosable <tt>cnf</tt>
+    claim <xref target="RFC7800"/> whose <tt>jwk</tt> is the active operational
+    proof public key.  Combined-mode verification depends on that key, so it
+    is validity-critical in that profile and is deliberately not made a
+    selective disclosure.</t>
+    <t>Issuers MAY place other selectively disclosable claims in the SD-JWT,
+    but their semantics are outside this specification.  In particular this
+    document does not standardize operator contact data, certifications,
+    reputation, enrollment timestamps, credential counts, or Registry
+    lifecycle fields as email claims.</t>
+  </section>
+
+  <section anchor="sd-jwt-message-binding">
+    <name>Message Binding via Issuer-Signed Nonce</name>
+    <t>The sender computes a message-binding nonce before requesting the
+    per-message SD-JWT:</t>
+    <artwork>
+message-binding = h-hash || bh-raw || ts-bytes
+nonce = base64url(SHA-256(message-binding))
+
+h-hash   = SHA-256(canonicalized-headers)  ; 32 bytes
+bh-raw   = SHA-256(canonicalized body)     ; 32 bytes
+ts-bytes = big-endian uint64(iat)          ; 8 bytes
+    </artwork>
+    <t>The sender proposes <tt>iat</tt>; the Registrar MUST reject a proposed
+    value outside its configured clock-skew allowance.  The accepted value is
+    used both in the JWT and in <tt>ts-bytes</tt>.</t>
+    <t><tt>h-hash</tt> uses the always-covered fields of
+    <xref target="header-format"/>, in the order listed there (the same
+    fields Mode 1 always covers).  Header selection, including absent
+    fields and repeated names, follows the DKIM <tt>h=</tt> rules; selected
+    fields use DKIM relaxed header canonicalization and are each followed by
+    CRLF.  Listing a field that is absent at signing therefore also protects
+    against later addition of that field; duplicate singleton fields are
+    rejected by <xref target="sd-jwt-verification"/>.  The exact ASCII string
+    <tt>hardware-trust-proof:</tt> is appended last with an empty value and no
+    trailing CRLF.  <tt>bh-raw</tt> is SHA-256 of DKIM simple body
+    canonicalization.</t>
+    <t>The sender submits <tt>nonce</tt> and <tt>iat</tt> to the Registrar
+    over an authenticated channel.  The Registrar MUST authenticate an
+    active AIRS binding and MUST issue <tt>aid.trust_tier</tt> for the
+    binding actually used.  In Combined mode it MUST set <tt>cnf.jwk</tt> to
+    the proof key of that same binding.  It returns an SD-JWT and
+    disclosures; the sender chooses which optional disclosures to
+    present.</t>
+    <t>The issuer signature authenticates every disclosed value through the
+    SD-JWT disclosure hashes, but the <em>choice of which optional disclosures
+    are included</em> is not message-bound by this nonce construction because
+    the Hardware-Trust-Proof value is blank during nonce computation.  This
+    specification makes no stronger claim.  Combined mode provides an
+    additional Mode-1 signature over the complete Mode-2 header.</t>
+  </section>
+
+  <section anchor="sd-jwt-verification">
+    <name>Verification Algorithm</name>
+    <ol>
+      <li>Require exactly one Hardware-Trust-Proof field and no more than
+      one instance of each always-covered field listed for <tt>h</tt> in
+      <xref target="header-format"/>.  Reject duplicates as
+      <tt>permerror</tt>.  Parse the SD-JWT presentation and treat all
+      unverified claims and disclosures as untrusted input.</li>
+      <li>If a canonical <tt>sub</tt> disclosure is present, use it only as a
+      candidate lookup key: resolve it, obtain <tt>currentIssuer</tt>, and
+      require the visible <tt>iss</tt> to equal that URI.  If there is no
+      current issuer, fail identified verification.  If <tt>sub</tt> is not
+      disclosed, require local policy to trust the visible <tt>iss</tt> before
+      using it for discovery.</li>
+      <li>Perform <xref target="issuer-discovery"/> and verify the SD-JWT
+      signature and disclosures according to <xref target="RFC9901"/>.  Require
+      disclosure of <tt>aid.trust_tier</tt> and accept its value only with the
+      semantics defined by the Registry specification.  If the verified
+      Issuer-signed payload contains <tt>cnf</tt> but the message has no
+      Hardware-Attestation field, reject the presentation rather than
+      silently degrading a Combined proof to standalone Mode 2.  If it
+      contains <tt>cnf</tt>, the verifier MUST also evaluate Mode 1 and
+      report <tt>hw-trust=pass</tt> only if <tt>hw-attest</tt> passed, the
+      CMS signer public key equals <tt>cnf.jwk</tt>, the canonical
+      identifiers carried by both artifacts (if both carry one) are equal,
+      and, when the Mode-1 result is Registrar-bound, its tier equals
+      <tt>aid.trust_tier</tt>; otherwise it reports <tt>fail</tt>.</li>
+      <li>Require <tt>iat</tt> and <tt>nonce</tt>.  Reject a materially
+      future <tt>iat</tt>.  If <tt>exp</tt> is present, enforce it according
+      to <xref target="RFC7519"/>; delivery delay does not make an expired
+      JWT valid.  An expired token is reported as <tt>policy</tt>, with the
+      cause in the comment.</li>
+      <li>Recompute the nonce exactly as defined in
+      <xref target="sd-jwt-message-binding"/> and require byte-for-byte
+      equality.</li>
+      <li>Apply receiver-local age/replay policy to <tt>iat</tt>.  A policy
+      refusal of an old but cryptographically valid proof is recorded as a
+      policy result rather than changing JWT expiration semantics.  An exact
+      replay of the same message can be detected by caching issuer/nonce
+      pairs, but SMTP retransmission policy is receiver-specific.</li>
+      <li>If <tt>sub</tt> was disclosed, verify its disclosure digest and
+      require it to be the same canonical identifier used for authoritative
+      issuer resolution.  Report an identified result.  Otherwise report a
+      hidden-identity issuer property result and do not create a durable
+      identity key from it.</li>
+    </ol>
+  </section>
+
+  <section anchor="sd-jwt-auth-results">
+    <name>Authentication-Results Integration</name>
+    <artwork>
+Authentication-Results: mx.example.com;
+  hw-trust=pass
+    header.mode=identified
+    header.tier=sovereign
+    header.issuer="https://registrar.example/agents"
+    header.aid="urn:aid:global:id-qkckh-xxtcw-cxbvp-gpskg"
+    </artwork>
+    <t>For hidden-identity Mode 2, <tt>header.mode=hidden</tt> is recorded and
+    <tt>header.aid</tt> is absent.  The method's registered result names and
+    properties are defined in <xref target="iana-considerations"/>.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="combined-mode">
+  <name>Combined Mode</name>
+  <t>A message MAY carry both Hardware-Attestation and Hardware-Trust-Proof,
+  but a verifier MUST reject more than one instance of either field.
+  Combined mode is meaningful only when the verifier establishes that the two
+  artifacts concern the same message and the same Mode-1 signing key.  When a
+  Registrar-backed AIRS identity is claimed, that key is the enrolled
+  operational proof key identified by the Registrar assertion.</t>
+  <t>The Mode-1 <tt>h</tt> list MUST include Hardware-Trust-Proof so the CMS
+  signature covers the complete SD-JWT presentation, including the sender's
+  disclosure selection.  The Combined-mode SD-JWT MUST contain the
+  non-selective <tt>cnf.jwk</tt> required by <xref target="sd-jwt-header"/>;
+  the verifier MUST require it to equal the CMS signer public key.  If Mode 1 carries
+  <tt>aid</tt>, Mode 2 MUST also disclose <tt>sub</tt> and the two canonical
+  identifiers MUST be equal.</t>
+  <t>Combined mode is not automatically independent defense in depth.  If
+  Mode 1 is Registrar-bound and Mode 2 is issued by the same Registrar, a
+  compromise of that Registrar affects both assertions.  Independence exists
+  only for properties established by a genuinely independent manufacturer-
+  rooted Mode-1 path.</t>
+</section>
+    <!-- ====================================================== -->
+    <section anchor="interaction-dkim">
+  <name>Interaction with Existing Email Authentication</name>
+  <t>The mechanisms in this document complement rather than replace existing
+  email authentication.</t>
+  <dl>
+    <dt>SPF <xref target="RFC7208"/></dt><dd>Authenticates sending
+    infrastructure authorization for a domain; orthogonal to AIRS actor
+    attestation.</dd>
+    <dt>DKIM <xref target="RFC6376"/></dt><dd>Authenticates a domain's
+    signature.  A DKIM signer that receives an already-attested message
+    SHOULD include Hardware-Attestation and Hardware-Trust-Proof in its
+    <tt>h=</tt> coverage so removal is detectable at the domain layer.</dd>
+    <dt>DMARC <xref target="RFC9989"/></dt><dd>Evaluates domain alignment
+    and policy.  Incorporating AIRS results into DMARC policy is outside this
+    specification.</dd>
+    <dt>ARC <xref target="RFC8617"/></dt><dd>Can preserve a trusted
+    intermediary's Authentication-Results through forwarding.  This is
+    particularly useful when a later verifier cannot reproduce the original
+    receipt-time issuer/freshness decision.</dd>
+    <dt>S/MIME <xref target="RFC8551"/> and OpenPGP/MIME
+    <xref target="RFC3156"/></dt><dd>Protect message content and/or sender
+    credentials at different layers and can coexist with these headers.</dd>
+  </dl>
+
+  <section anchor="multiple-headers">
+    <name>Forwarding and Message Modification</name>
+    <t>Changes to a covered header or canonicalized body invalidate the
+    originating attestation just as comparable changes can invalidate DKIM.
+    A forwarder MAY record the original successful verification in
+    Authentication-Results and protect that result with ARC.  It MUST NOT
+    construct a new passing AIRS result unless it independently performs the
+    verification defined here.</t>
+  </section>
+
+  <section anchor="handle-display-email">
+    <name>Human-Readable Display Names</name>
+    <t>A canonical <tt>aid</tt> is not intended as a mailbox display name.
+    MUAs MAY obtain a handle or other display attribute from a separate naming
+    or credential layer, but long-lived identity/reputation state MUST remain
+    keyed to the canonical identifier when identity continuity is required.</t>
+    <t>A passing result authenticates the bytes of the covered From field
+    and the actor and key behind the signature.  It does not show that the
+    actor may use that mailbox, domain, brand, or display name, which remain
+    the business of DMARC, submission account policy, and trademark law.  A
+    mail client MUST NOT present a passing result as an endorsement of the
+    From address or display name, and SHOULD show the verified identity or
+    property apart from the sender's address, next to the separate SPF,
+    DKIM, and DMARC results.  A deployment that wants mailbox authority can
+    use an independently issued credential keyed by the canonical
+    identifier; this document defines none.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="submission-requirements">
+  <name>Message Submission Requirements</name>
+  <t>An attestation-aware Message Submission Agent (MSA) provides an early
+  verification point but is not the authority that defines identity0 or
+  hardware tier.  An MSA that claims to validate these headers MUST run the
+  same Mode-1 or Mode-2 verification required of a receiver.</t>
+
+  <section anchor="submission-aid-binding">
+    <name>Identity and Account Policy</name>
+    <t>If local submission policy restricts which canonical AIRS identities
+    an authenticated account may use, the MSA MUST compare that policy only
+    after the <tt>aid</tt> has been cryptographically authenticated by
+    Registrar-bound Mode 1 or identified Mode 2.  SMTP authentication or an
+    account database MUST NOT substitute for the AIRS issuer-binding checks
+    in this specification.  A mismatch MAY be rejected with an appropriate
+    5.7.x policy response.</t>
+  </section>
+
+  <section anchor="submission-hw-fingerprint-binding">
+    <name>Proof-Key Control</name>
+    <t>Successful Mode-1 verification already proves control of the CMS
+    signer key.  An MSA MAY additionally bind that verified key or canonical
+    <tt>aid</tt> to local account policy.  Such local policy does not alter the
+    Registry anchor fingerprint or create a new AIRS identity binding.</t>
+  </section>
+
+  <section anchor="submission-no-attestation">
+    <name>Messages Without Attestation</name>
+    <t>Whether an account is required to submit either header is local policy.
+    Absence of these headers is not an authentication failure defined by this
+    protocol.</t>
+  </section>
+
+  <section anchor="submission-duplicate-headers">
+    <name>Duplicate Header Rejection</name>
+    <t>A submitted message MUST NOT contain more than one instance of either
+    Hardware-Attestation or Hardware-Trust-Proof.  An MSA that validates this
+    protocol MUST reject duplicates before adding its own DKIM signature.</t>
+  </section>
+
+  <section anchor="submission-timestamp-validation">
+    <name>Freshness at Submission</name>
+    <t>An MSA SHOULD apply a strict local freshness policy to Mode-1
+    <tt>ts</tt> and Mode-2 <tt>iat</tt> because submission occurs close to
+    proof generation.  This check is local policy and does not change the JWT
+    <tt>exp</tt> semantics defined by <xref target="RFC7519"/>.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="interoperability">
+      <name>Interoperability Considerations</name>
+
+      <section anchor="backward-compat">
+        <name>Backward Compatibility</name>
+        <t>
+          This specification introduces new email headers that are
+          ignored by mail servers that do not implement it.  Messages
+          carrying Hardware-Attestation or Hardware-Trust-Proof headers
+          are fully compatible with legacy mail infrastructure: the
+          headers are simply unrecognized and have no effect on
+          delivery.  This ensures that deployment can proceed
+          incrementally without disrupting existing email flows.
+        </t>
+      </section>
+
+      <section anchor="signing-order">
+        <name>DKIM Coverage of Attestation Headers</name>
+        <t>
+          Because the sending agent adds the Hardware-Attestation
+          and Hardware-Trust-Proof headers before submitting the
+          message to the MSA, DKIM signing (which occurs at the
+          MSA or a downstream MTA) naturally occurs after these
+          headers are present.  The DKIM signer SHOULD include
+          Hardware-Attestation and Hardware-Trust-Proof in the
+          DKIM-Signature h= tag so that the DKIM signature
+          protects the attestation evidence against modification
+          in transit.  This allows a verifier to confirm that the
+          domain owner's mail infrastructure accepted the
+          attestation header as submitted by the agent.
+        </t>
+      </section>
+
+      <section anchor="finalize-before-signing">
+        <name>Finalize Before Signing</name>
+        <t>
+          Message Submission <xref target="RFC6409"/> allows an MSA to add
+          or complete Date, Message-ID, and Sender and to apply
+          content-transfer encoding.  A change to a covered field or to the
+          body invalidates the proof, exactly as it would a DKIM signature.
+          A sender therefore sets its own Date and Message-ID, uses a
+          content-transfer encoding that no relay needs to change (7bit,
+          quoted-printable, or base64, not 8bit or binary), and computes the
+          covered hashes and any Mode-2 nonce only after the message is in
+          its final form.  An MSA that validates these headers SHOULD NOT
+          modify a covered field; if it must, the sender needs to resubmit
+          with the field completed.  The proof promises no immunity from
+          later mutation: a changed message fails verification, and a
+          trusted receiver can preserve its own result as described in
+          <xref target="mode1-registrar-binding"/>.
+        </t>
+      </section>
+
+      <section anchor="dkim-tag-syntax">
+        <name>Relationship to DKIM and DKIM2 Tag Syntax</name>
+        <t>
+          The two header fields defined here deliberately reuse the
+          tag-spec layout of <xref target="RFC6376"/> Section 3.2, which
+          <xref target="I-D.ietf-dkim-dkim2-spec"/> also carries forward.
+          An implementation can therefore share one tokenizer across
+          DKIM-Signature, DKIM2 header fields, and these fields: split on
+          ";", split each tag on the first "=", and trim surrounding
+          folding whitespace.
+        </t>
+        <t>
+          Four differences from a generic DKIM tag-list are intentional and
+          have to be honored:
+        </t>
+        <ul>
+          <li>Tag order is fixed by <xref target="header-format"/> rather
+          than free, because the Mode-1 signature is computed over a
+          reconstruction of the field in that order.</li>
+          <li>No extension tags are defined, and an unrecognized tag is a
+          malformed field rather than something to ignore.  A DKIM verifier
+          may ignore tags it does not know because DKIM signs a
+          canonicalized copy of the field with the <tt>b=</tt> value
+          blanked; here an unknown tag would change a signed input the
+          verifier cannot reproduce.</li>
+          <li>Internal whitespace is ignored in <em>every</em> tag value,
+          not only in the base64 values (generators fold only within the
+          multi-character <tt>h</tt>, <tt>bh</tt>, <tt>ts</tt>,
+          <tt>chain</tt>, <tt>aid</tt>, and <tt>bind</tt> values).  DKIM states that rule only for
+          <tt>b=</tt> and <tt>bh=</tt>, and its <tt>h=</tt> grammar permits
+          folding whitespace only around the ":" separators.  In practice,
+          deployed signers fold <tt>h=</tt> in mid-token, so this
+          specification permits folding at any point in a value and requires
+          verifiers to strip it.</li>
+          <li>The <tt>bh</tt> value is unpadded base64url
+          (<xref target="RFC4648"/>, Section 5), not the base64 of the DKIM
+          <tt>bh=</tt> tag.  A shared tag tokenizer can be reused; a shared
+          <tt>bh</tt> decoder cannot.</li>
+        </ul>
+        <t>
+          A trailing semicolon after the final tag is accepted but not
+          required.  DKIM2 has moved toward requiring one on its own header
+          fields; accepting both forms here keeps a shared generator usable
+          without constraining which convention a deployment follows.
+        </t>
+      </section>
+
+      <section anchor="header-size">
+        <name>Header Size Considerations</name>
+        <t>
+          The base64-encoded CMS SignedData in Mode 1 can be several
+          kilobytes when manufacturer evidence includes certificate chains.
+          Implementations MUST honor the line-length requirements of
+          <xref target="RFC5322"/> and MUST use the DKIM-style whitespace
+          semantics defined by <xref target="header-format"/> and
+          <xref target="sd-jwt-header"/> when folding any value in these
+          fields.  Deployments
+          that impose aggregate header-size limits need to account for the
+          CMS object and, in Registrar-bound mode, the binding JWS.  This
+          specification does not set a deployment-specific minimum header
+          budget.  A verifier SHOULD reject a field larger than its local
+          limit as <tt>permerror</tt> without decoding it.
+        </t>
+      </section>
+    </section>
+
+    <!-- ====================================================== -->
+    <section anchor="implementation-status">
+  <name>Implementation Status</name>
+  <t>NOTE TO RFC EDITOR: Please remove this section before publication.</t>
+  <t>This section records the status of known implementations of this
+  specification and follows the guidance of <xref target="RFC7942"/>.</t>
+
+  <section>
+    <name>1id.com Registrar and Sender Implementation</name>
+    <t>Organization: 1id.com (https://1id.com)</t>
+    <t>The 1id.com implementation supports both Mode 1 (Direct Hardware
+    Attestation) and Mode 2 (SD-JWT Trust Proof), including authoritative
+    AIRS <tt>currentIssuer</tt> resolution, RFC 8414 issuer metadata and JWKS
+    discovery, Registrar binding JWSs that bind the canonical <tt>aid</tt> to
+    the exact Mode-1 proof key, detached CMS verification over the 92-octet
+    <tt>attestation-input</tt>, per-message SD-JWT issuance, and Combined
+    mode.  Supported AIRS mechanism mappings include TPM, PIV/YubiKey,
+    hardware enclave, virtual TPM, and software-managed proof keys.  On
+    Windows, enrollment and signing run without administrative
+    privileges.  Every tier, including the declared tier, obtains tokens
+    by a challenge signature from its enrolled key; the Registrar no longer
+    accepts a static client secret.  Every access token is
+    sender-constrained to that key, and the 1id.com and MailPal.com APIs
+    accept a token only with an HTTP Message Signature by it.  Apple
+    Secure Enclave bindings are enrolled on trust on first use.</t>
+    <t>Maturity: Production deployment at https://1id.com.</t>
+    <t>Published open-source components: the Python SDK "oneid" 4.0.0 on
+    PyPI (<eref target="https://github.com/1id-com/oneid-sdk"/>), the
+    Node.js SDK "1id" 4.0.0 on npm
+    (<eref target="https://github.com/1id-com/oneid-node"/>), the
+    code-signed hardware enrollment helper "oneid-enroll" 3.0.0
+    (<eref target="https://github.com/1id-com/oneid-enroll"/>), and the
+    draft/test-vector repository
+    (<eref target="https://github.com/1id-com/draft-drake-email-hardware-attestation"/>).</t>
+  </section>
+
+  <section>
+    <name>MailPal.com Verifier and Relay</name>
+    <t>Organization: 1id.com (https://mailpal.com)</t>
+    <t>MailPal.com implements receiving-side verification of Mode 1 and Mode 2,
+    including AIRS identity/issuer binding checks and
+    <tt>Authentication-Results</tt> generation.  All five AIRS trust tiers are
+    exercised by the live messages in <xref target="appendix-live-examples"/>.</t>
+    <t>Maturity: Production mail infrastructure and verifier deployment at
+    https://mailpal.com.</t>
+    <t>The open-source verification library and command-line tool is
+    <eref target="https://github.com/1id-com/hw-attest-verify"/>,
+    published to PyPI as <tt>hw-attest-verify</tt>.  Version 3.0.0
+    implements revision -03 of this document: the Registrar-bound Mode 1
+    trust path (the manufacturer-rooted path is reserved, because this
+    revision names no evidence profile for it), identified and
+    hidden-identity Mode 2, Combined mode, and the pass,
+    fail, policy, temperror, and permerror results.  It rejects an RDAP
+    answer whose canonical identifier differs from the one requested or
+    whose identity is not operational, and it quotes property values that
+    are not MIME tokens.  It resolves <tt>aid</tt> values through the
+    configured interim
+    RDAP base <tt>https://airs.1id.biz</tt> permitted by
+    <xref target="I-D.drake-agent-identity-resolution"/>, because the
+    <tt>aid.urn.arpa</tt> delegation does not yet exist.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="iana-considerations">
+  <name>IANA Considerations</name>
+
+  <section anchor="iana-header-fields">
+    <name>Message Header Fields</name>
+    <t>IANA is requested to add the following entries to the "Permanent
+    Message Header Field Names" registry <xref target="RFC3864"/>:</t>
+    <table>
+      <thead><tr><th>Header Field Name</th><th>Template</th><th>Protocol</th><th>Status</th><th>Trace</th><th>Reference</th></tr></thead>
+      <tbody>
+        <tr><td>Hardware-Attestation</td><td></td><td>mail</td><td>experimental</td><td>no</td><td><xref target="header-format"/></td></tr>
+        <tr><td>Hardware-Trust-Proof</td><td></td><td>mail</td><td>experimental</td><td>no</td><td><xref target="sd-jwt-header"/></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section anchor="iana-auth-methods">
+    <name>Email Authentication Methods and Properties</name>
+    <t>IANA is requested to register the following entries in the
+    "Email Authentication Methods" registry of <xref target="RFC8601"/>.
+    Each entry has Status <tt>active</tt> and Version <tt>1</tt>.</t>
+    <table>
+      <thead><tr><th>Method</th><th>Definition</th><th>ptype</th><th>Property</th><th>Value</th><th>Status</th><th>Version</th></tr></thead>
+      <tbody>
+        <tr><td>hw-attest</td><td><xref target="auth-results"/></td><td>header</td><td>typ</td><td>TPM / PIV / ENC / VRT / SFT</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-attest</td><td><xref target="auth-results"/></td><td>header</td><td>alg</td><td>RS256 / ES256 / PS256</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-attest</td><td><xref target="auth-results"/></td><td>header</td><td>path</td><td>manufacturer / registrar / both</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-attest</td><td><xref target="auth-results"/></td><td>header</td><td>tier</td><td>verified Registrar-asserted AIRS tier</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-attest</td><td><xref target="auth-results"/></td><td>header</td><td>aid</td><td>verified canonical AIRS identifier</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-trust</td><td><xref target="sd-jwt-auth-results"/></td><td>header</td><td>mode</td><td>identified / hidden</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-trust</td><td><xref target="sd-jwt-auth-results"/></td><td>header</td><td>tier</td><td>disclosed AIRS tier</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-trust</td><td><xref target="sd-jwt-auth-results"/></td><td>header</td><td>issuer</td><td>verified issuer URI</td><td>active</td><td>1</td></tr>
+        <tr><td>hw-trust</td><td><xref target="sd-jwt-auth-results"/></td><td>header</td><td>aid</td><td>verified canonical AIRS identifier, if disclosed</td><td>active</td><td>1</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section anchor="iana-auth-results">
+    <name>Email Authentication Result Names</name>
+    <t>IANA is requested to register the following entries in the "Email
+    Authentication Result Names" registry:</t>
+    <table>
+      <thead><tr><th>Auth Method(s)</th><th>Code</th><th>Specification</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>hw-attest</td><td>pass</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-attest</td><td>fail</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-attest</td><td>none</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-attest</td><td>temperror</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-attest</td><td>permerror</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-attest</td><td>policy</td><td><xref target="verification-algorithm"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>pass</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>fail</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>none</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>temperror</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>permerror</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+        <tr><td>hw-trust</td><td>policy</td><td><xref target="sd-jwt-verification"/></td><td>active</td></tr>
+      </tbody>
+    </table>
+    <t>For both methods, <tt>pass</tt> means the required cryptographic checks
+    and receiver trust/freshness policy succeeded; <tt>fail</tt> means a
+    required cryptographic, message-binding, chain, or identity-binding check
+    failed; <tt>none</tt> means the corresponding header field was absent;
+    <tt>temperror</tt> means verification could not complete because of a
+    transient external error; <tt>permerror</tt> means the field was malformed,
+    unsupported, or otherwise permanently unverifiable; and <tt>policy</tt>
+    means the cryptographic proof was valid but receiver policy declined it,
+    for example because a proof was too old, a Registrar assertion had
+    expired, or an issuer/root was not locally trusted.</t>
+  </section>
+
+  <section anchor="iana-media-types">
+    <name>Media Types for Explicit JWT Typing</name>
+    <t>To prevent cross-JWT confusion, IANA is requested to register the
+    following media types in the Standards Tree according to
+    <xref target="RFC6838"/>.  The shortened subtype values are used in the
+    JWS <tt>typ</tt> protected header as specified above.</t>
+
+    <section anchor="iana-media-binding-jwt">
+      <name>application/airs-email-binding+jwt</name>
+      <dl>
+        <dt>Type name</dt><dd>application</dd>
+        <dt>Subtype name</dt><dd>airs-email-binding+jwt</dd>
+        <dt>Required parameters</dt><dd>none</dd>
+        <dt>Optional parameters</dt><dd>none</dd>
+        <dt>Encoding considerations</dt><dd>binary; encoded as a compact JWT
+        using base64url components separated by period characters.</dd>
+        <dt>Security considerations</dt><dd>See
+        <xref target="security-considerations"/>, <xref target="RFC7519"/>,
+        and <xref target="RFC8725"/>.</dd>
+        <dt>Interoperability considerations</dt><dd>none</dd>
+        <dt>Published specification</dt><dd>This document,
+        <xref target="mode1-registrar-binding"/>.</dd>
+        <dt>Applications that use this media type</dt><dd>Registrar binding
+        assertions for AIRS Email Mode 1.</dd>
+        <dt>Fragment identifier considerations</dt><dd>none</dd>
+        <dt>Additional information</dt><dd>Magic number(s): none; File
+        extension(s): none; Macintosh file type code(s): none.</dd>
+        <dt>Person &amp; email address to contact for further information</dt>
+        <dd>Christopher Drake, cnd@1id.com</dd>
+        <dt>Intended usage</dt><dd>COMMON</dd>
+        <dt>Restrictions on usage</dt><dd>none</dd>
+        <dt>Author</dt><dd>Christopher Drake</dd>
+        <dt>Change controller</dt><dd>IETF</dd>
+      </dl>
+    </section>
+
+    <section anchor="iana-media-email-sd-jwt">
+      <name>application/airs-email+sd-jwt</name>
+      <dl>
+        <dt>Type name</dt><dd>application</dd>
+        <dt>Subtype name</dt><dd>airs-email+sd-jwt</dd>
+        <dt>Required parameters</dt><dd>none</dd>
+        <dt>Optional parameters</dt><dd>none</dd>
+        <dt>Encoding considerations</dt><dd>binary; encoded as an SD-JWT
+        according to <xref target="RFC9901"/>.</dd>
+        <dt>Security considerations</dt><dd>See
+        <xref target="security-considerations"/>, <xref target="RFC9901"/>,
+        and <xref target="RFC8725"/>.</dd>
+        <dt>Interoperability considerations</dt><dd>none</dd>
+        <dt>Published specification</dt><dd>This document,
+        <xref target="sd-jwt-header"/>.</dd>
+        <dt>Applications that use this media type</dt><dd>AIRS Email Mode-2
+        selective trust proofs.</dd>
+        <dt>Fragment identifier considerations</dt><dd>none</dd>
+        <dt>Additional information</dt><dd>Magic number(s): none; File
+        extension(s): none; Macintosh file type code(s): none.</dd>
+        <dt>Person &amp; email address to contact for further information</dt>
+        <dd>Christopher Drake, cnd@1id.com</dd>
+        <dt>Intended usage</dt><dd>COMMON</dd>
+        <dt>Restrictions on usage</dt><dd>none</dd>
+        <dt>Author</dt><dd>Christopher Drake</dd>
+        <dt>Change controller</dt><dd>IETF</dd>
+      </dl>
+    </section>
+  </section>
+
+  <section anchor="iana-no-other">
+    <name>No Separate Hardware-Type, DNS, or URN Registration</name>
+    <t>The Mode-1 <tt>typ</tt> values are fixed application mappings to the
+    Registry specification and this document does not create a second
+    extensible hardware taxonomy.  Registrar keys are discovered through
+    authoritative AIRS resolution and RFC 8414 rather than an underscored DNS
+    node.  The <tt>aid</tt> URN namespace is registered solely by
+    <xref target="I-D.drake-agent-identity-registry"/>.  No additional IANA
+    action is requested for those items by this document.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="security-considerations">
+  <name>Security Considerations</name>
+  <t>
+    The reasons for the boundaries of this document (trust is chosen,
+    higher layers stay above, Relying Parties own policy) are set out in the
+    Boundary Principles of
+    <xref target="I-D.drake-agent-identity-problem-statement"/>.
+  </t>
+
+  <section anchor="sec-message-binding">
+    <name>Message Binding and Replay</name>
+    <t>Both modes bind selected headers, the canonicalized body, and a sender
+    time value into a cryptographic proof.  An artifact copied to different
+    content therefore fails.  Replaying the exact same message does not
+    forge different content; the covered To field is a header, not the SMTP
+    envelope recipient, so the same signed message can reach other
+    recipients (for example Bcc recipients, list members, or a copy that was
+    captured and resent), and the proof binds no recipient and makes no
+    claim about who should receive the message; receivers may use
+    Message-ID, issuer/nonce caches, and normal SMTP duplicate handling as
+    local replay policy.</t>
+  </section>
+
+  <section anchor="sec-signing-purpose">
+    <name>Signing-Purpose Separation</name>
+    <t>A Mode-1 proof key signs an <tt>attestation-input</tt> that begins
+    with the fixed label of <xref target="header-format"/>, and the same
+    operational key is typically also used for binding-proof authentication
+    to its Registrar.  The label is reserved for this use: an implementation
+    that signs data supplied by another party with a Mode-1 proof key MUST
+    refuse data that begins with it, so that a signature obtained in another
+    protocol cannot be presented as a Mode-1 signature over a message the
+    key holder never sent.</t>
+  </section>
+
+  <section anchor="credential-theft-and-replay">
+    <name>Identity Substitution</name>
+    <t>Merely placing an <tt>aid</tt> inside a header that the sender signs
+    proves only that the sender chose those bytes.  It does not prove that the
+    signing key is enrolled to that AIRS identity.  Mode 1 therefore forbids
+    <tt>aid</tt> without a verified Registrar binding JWS, and identified Mode
+    2 requires authoritative resolution of <tt>currentIssuer</tt>.  Verifiers
+    MUST NOT skip those binding steps.</t>
+  </section>
+
+  <section anchor="issuer-trust">
+    <name>Registrar Trust Boundary</name>
+    <t>A Registrar-backed tier assertion is trusted because the Registrar has
+    performed the enrollment checks defined by the Registry specification.
+    The RP normally does not redo manufacturer enrollment evidence.  A
+    malicious or compromised Registrar can therefore make false assertions
+    for identities it currently sponsors; accreditation, audit, jurisdiction,
+    and receiver-local issuer policy are meaningful trust decisions, not
+    ceremonial metadata.</t>
+    <t>Authoritative issuer resolution limits that power to the current
+    Registrar for the disclosed identity.  A valid signature from some other
+    Registrar does not authorize it to speak for that <tt>aid</tt>.  After
+    suspension or de-accreditation, an identity with no <tt>currentIssuer</tt>
+    fails Registrar-backed email verification until actor-authorized transfer
+    establishes a new current Registrar.</t>
+  </section>
+
+  <section anchor="manufacturer-ca-compromise">
+    <name>Manufacturer and Attestation Root Trust</name>
+    <t>Manufacturer-rooted Mode 1 depends on the verifier's accepted root and
+    evidence policy.  Orderly root retirement and emergency security distrust
+    have different consequences in AIRS; see
+    <xref target="I-D.drake-agent-identity-registry"/>.  Direct verifiers
+    apply their current accepted-root policy and MUST NOT interpret an old or
+    compromised manufacturer chain as current hardware assurance merely
+    because the CMS message signature is mathematically valid.</t>
+  </section>
+
+  <section anchor="revocation-and-compromise">
+    <name>Binding and Key Compromise</name>
+    <t>Hardware binding does not prevent a compromised agent from sending bad
+    mail as itself.  It limits key extraction/cloning according to the
+    properties of the enrolled mechanism and preserves attribution to the key
+    that acted.  A compromised Mode-1 signing key can produce valid signatures.  In the
+    Registrar-bound profile, that remains true until its AIRS binding is
+    disabled or other policy rejects it.
+    Registrar binding JWSs are therefore time-bounded with <tt>exp</tt> and
+    MUST be refreshed.  A binding disabled or distrusted before an already
+    issued JWS expires can leave a residual acceptance window; deployments
+    that require rapid invalidation MUST use suitably short binding-JWS
+    lifetimes and current issuer/trust policy.  Mode 2 issuance MUST
+    authenticate a currently valid, assurance-qualified binding before
+    asserting its tier.</t>
+  </section>
+
+  <section anchor="combined-security">
+    <name>Combined-Mode Dependence</name>
+    <t>Two signatures are not automatically two independent trust anchors.
+    Registrar-bound Mode 1 and Mode 2 may both depend on the same Registrar,
+    so compromise of that Registrar can affect both.  A manufacturer-rooted
+    Mode-1 path can add independent evidence when it authenticates the same
+    operational proof key and Combined mode enforces
+    <xref target="combined-mode"/>.</t>
+  </section>
+
+  <section anchor="compromised-endpoints">
+    <name>Endpoint Compromise</name>
+    <t>Malware controlling an authorized agent can ask its protected key to
+    sign malicious content without extracting that key.  This protocol does
+    not attest the model, operating system, browser, container, prompt,
+    operator intent, or message truthfulness.  Trust tier and successful
+    verification MUST NOT be treated as authorization or reputation.</t>
+  </section>
+
+  <section anchor="header-stripping">
+    <name>Header Stripping and Forwarding</name>
+    <t>An intermediary can remove these headers, causing loss of the signal
+    rather than creation of a false passing result.  DKIM coverage and ARC
+    can make removal or prior verification visible, subject to the normal
+    trust assumptions of those mechanisms.</t>
+  </section>
+
+
+  <section anchor="sec-auth-results">
+    <name>Authentication-Results Trust Boundary</name>
+    <t>The Authentication-Results examples in this document report a
+    verifier's outcome; they are not self-authenticating evidence.  Consumers
+    MUST apply the trust-boundary rules of <xref target="RFC8601"/> and MUST
+    NOT trust an Authentication-Results field merely because an external
+    sender supplied it.  A receiving ADMD should remove or otherwise neutralize
+    conflicting untrusted Authentication-Results fields according to RFC 8601
+    before adding its own result.</t>
+  </section>
+
+  <section anchor="sec-crypto-agility">
+    <name>Cryptographic Agility</name>
+    <t>Version 1 uses SHA-256 with RS256, PS256, or ES256 for Mode 1 and the
+    algorithms permitted by the Registrar's authenticated JWK Set for the JWS
+    and SD-JWT signatures.  Algorithm deprecation is independent of identity0
+    continuity.  A future incompatible change to the Mode-1 hash/signature
+    construction requires a new protocol version.</t>
+  </section>
+</section>
+<!-- ====================================================== -->
+    <section anchor="privacy-considerations">
+  <name>Privacy Considerations</name>
+  <t>The Problem Statement distinguishes autonomous agents from natural
+  persons while recognizing that machine identifiers can expose information
+  about human operators or customers.  This application therefore separates
+  durable identity disclosure from property disclosure.</t>
+
+  <section anchor="priv-fingerprint">
+    <name>Mode-1 Linkability</name>
+    <t>Mode 1 necessarily exposes the operational proof public key through
+    the CMS signer certificate.  Reuse of that key makes messages linkable by
+    its SPKI fingerprint.  Registrar-bound Mode 1 additionally exposes the
+    canonical <tt>aid</tt>, deliberately enabling durable actor continuity.
+    Manufacturer-rooted evidence may reveal manufacturer, device-family, or
+    device-unique values (for example a serial number in a certificate), and
+    the signer certificate carried in SignedData is visible to every
+    recipient, so anything it names, including an AIRS identifier, is
+    disclosed with the message.  A Mode-1 signature is a public-key
+    signature: any recipient can show the signed message to others as
+    evidence that the key signed it.  This document provides attribution to
+    the key that acted, and no deniability.  None of those values should be
+    mistaken for human identity.</t>
+  </section>
+
+  <section anchor="priv-mode2">
+    <name>Mode-2 Selective Disclosure</name>
+    <t>Standalone hidden-identity Mode 2 omits the canonical <tt>aid</tt> and
+    <tt>cnf</tt>, so the email proof contains no sender-selected persistent
+    AIRS identity or proof key.  The issuer URI, message-bound nonce, issuance
+    time, and disclosed properties remain visible and can themselves be
+    correlating signals.  Identified Mode 2 intentionally discloses the
+    canonical <tt>aid</tt> and is therefore linkable by design.  Combined mode
+    exposes <tt>cnf.jwk</tt> to bind Mode 2 to the Mode-1 signing key, so it
+    remains key-linkable even if <tt>sub</tt> is withheld.  Hidden-identity
+    means only that the authenticated canonical <tt>sub</tt> is withheld.
+    It does not hide an identifier carried elsewhere in the message,
+    including in a Mode-1 signer certificate; a sender that wants a
+    property-only message uses standalone Mode 2, or a signer certificate
+    that names no identity.</t>
+    <t>The sender chooses which optional SD-JWT disclosures to reveal.  Their
+    values are issuer-authenticated, but this revision does not claim that the
+    disclosure <em>selection</em> is message-bound except in Combined mode,
+    where the Mode-1 signature covers the complete Hardware-Trust-Proof
+    field.</t>
+  </section>
+
+  <section anchor="priv-issuer">
+    <name>Registrar Observation</name>
+    <t>Mode 2 requires a per-message issuance interaction, so the Registrar
+    can observe that the actor requested a proof and when.  The nonce is a
+    hash-derived message binding, not plaintext message content, but traffic
+    analysis can still reveal patterns.  Registrars SHOULD minimize retained
+    request metadata and follow their published privacy and legal-retention
+    policy.  This document does not invent a separate central behavior log.</t>
+  </section>
+
+  <section anchor="priv-data-minimization">
+    <name>Data Minimization</name>
+    <t>Receivers SHOULD retain only the identity or property information
+    needed for their decision.  A canonical <tt>aid</tt>, proof-key
+    fingerprint, or manufacturer evidence can become a durable correlator and
+    SHOULD NOT be logged merely because the protocol made it available.</t>
+  </section>
+
+  <section anchor="priv-scope">
+    <name>Human-Related Information</name>
+    <t>An agent may act for one or more people or organizations.  The AIRS
+    identity identifies the independently accountable actor, not each human
+    principal it serves.  Privacy partitioning SHOULD use Mode 2 selective
+    disclosure, application aliases, or other higher-layer credentials rather
+    than minting multiple identity0s for the same actor.  Separate AIRS
+    identities are appropriate only when the underlying actors are themselves
+    independently accountable according to the Problem Statement.</t>
+  </section>
+</section></middle>
+
+  <back>
+
+    <references>
+      <name>Normative References</name>
+
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml"/>
+
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.4648.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5652.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.4056.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.3370.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5754.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6376.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8141.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8174.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8601.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5322.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5234.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7405.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6838.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8725.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.9901.xml"/>
+
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7515.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7519.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7638.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7800.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8414.xml"/>
+      <reference anchor="I-D.drake-agent-identity-registry" target="https://datatracker.ietf.org/doc/draft-drake-agent-identity-registry/">
+        <front>
+          <title>Agent Identity Registry System: A Federated Architecture
+          for Durable Identity of Autonomous Entities</title>
+          <author fullname="Christopher Drake" initials="C." surname="Drake">
+            <organization>1id.com</organization>
+          </author>
+          <date year="2026" month="October"/>
+        </front>
+        <seriesInfo name="Internet-Draft" value="draft-drake-agent-identity-registry-05"/>
+      </reference>
+      <reference anchor="I-D.drake-agent-identity-resolution" target="https://datatracker.ietf.org/doc/draft-drake-agent-identity-resolution/">
+        <front>
+          <title>Resolution and Verification of Agent Identities
+          using DNS and RDAP</title>
+          <author fullname="Christopher Drake" initials="C." surname="Drake">
+            <organization>1id.com</organization>
+          </author>
+          <date year="2026" month="October"/>
+        </front>
+        <seriesInfo name="Internet-Draft" value="draft-drake-agent-identity-resolution-01"/>
+      </reference>
+      <reference anchor="I-D.drake-agent-identity-problem-statement" target="https://datatracker.ietf.org/doc/draft-drake-agent-identity-problem-statement/">
+        <front>
+          <title>Identity for Autonomous Agents and Robots: Problem
+          Statement, Threat Model, and Terminology</title>
+          <author fullname="Christopher Drake" initials="C." surname="Drake">
+            <organization>1id.com</organization>
+          </author>
+          <date year="2026" month="October"/>
+        </front>
+        <seriesInfo name="Internet-Draft" value="draft-drake-agent-identity-problem-statement-01"/>
+      </reference>
+      <reference anchor="I-D.ietf-dkim-dkim2-spec" target="https://datatracker.ietf.org/doc/draft-ietf-dkim-dkim2-spec/">
+        <front>
+          <title>DomainKeys Identified Mail Signatures v2 (DKIM2)</title>
+          <author fullname="Richard Clayton" initials="R." surname="Clayton">
+            <organization>University of Cambridge</organization>
+          </author>
+          <date year="2026" month="August" day="28"/>
+        </front>
+        <seriesInfo name="Internet-Draft" value="draft-ietf-dkim-dkim2-spec-06"/>
+      </reference>
+</references>
+
+    <references>
+      <name>Informative References</name>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8792.xml"/>
+
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.3156.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7208.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.9989.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7942.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8551.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8617.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.9334.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.3864.xml"/>
+      <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6409.xml"/>
+
+    </references>
+
+    <!-- ====================================================== -->
+    <!-- ====================================================== -->
+    <section anchor="appendix-live-examples">
+      <name>Live Email Examples</name>
+      <t>
+        This appendix contains five complete email messages, one per
+        trust tier.  Each was produced on 27 October 2026 with the
+        published reference implementation of this specification (the
+        "oneid" 4.0.0 Python SDK and the "oneid-enroll" 3.0.0 hardware
+        helper, running without administrative privileges),
+        submitted through the MailPal.com submission service, verified
+        and stamped by the receiving MailPal.com verifier (the hw-attest
+        and hw-trust Authentication-Results fields), and copied from the
+        receiving message store.
+      </t>
+      <t>
+        The messages are shown wrapped with the single-backslash
+        strategy of <xref target="RFC8792"/>: a line that ends in "\"
+        continues on the next line, and that line's leading spaces are
+        not part of the content.  Unwrapping restores the received
+        messages exactly, except that TAB characters in the folding
+        whitespace of the Received and DKIM-Signature fields are shown
+        as spaces, as <xref target="RFC8792"/> requires.  Neither field
+        is covered by these signatures, and the header canonicalization
+        of this document treats TAB and SP alike.  Re-folding the two
+        Hardware-* fields does not change a signature, because whitespace in
+        them is deleted before hashing (<xref target="header-format"/>);
+        re-folding the body or any other covered field would, because those
+        use DKIM "simple" and relaxed canonicalization.
+      </t>
+      <t>
+        To verify an example, save it (starting with its "NOTE:" line),
+        unwrap it with the "rfcfold" script from Appendix A of
+        <xref target="RFC8792"/>, and run the open-source verifier
+        (<eref target="https://github.com/1id-com/hw-attest-verify"/>,
+        installed with "pip install hw-attest-verify", version 3.0.0 or
+        later):
+      </t>
+      <artwork><![CDATA[
+$ rfcfold -r -i example-wrapped.txt -o example.eml
+$ python3 -m hw_attest_verify --auth-results --no-time-check \
+    --hostname mailpal.com < example.eml
+]]></artwork>
+      <t>
+        Each example yields the same hw-attest=pass and hw-trust=pass
+        results as the Authentication-Results fields it carries.  No
+        trust store is needed: every example carries "aid" and "bind",
+        so Mode 1 is verified on the Registrar-bound path
+        (<xref target="mode1-registrar-binding"/>), and every example
+        discloses "sub", so Mode 2 is identified.  The verifier resolves
+        each "aid" at the AIRS Registry and fetches the Registrar's
+        <xref target="RFC8414"/> metadata and JWK Set
+        (<xref target="issuer-discovery"/>); it therefore needs network
+        access, and an example verifies only while its identity has a
+        current issuer.  The --no-time-check option skips the freshness
+        and expiry checks, because each SD-JWT and each Registrar
+        binding JWS expires one hour after issuance; the
+        cryptographic and message-binding checks do not depend on time.
+      </t>
+      <t>
+        Note on certificate chains: each Mode 1 SignedData carries the
+        certificate that the 1id.com Registrar issued for the enrolled
+        proof key, together with the Registrar's intermediate and root
+        ("1ID Intermediate CA A", "1ID Root CA A").  On the
+        Registrar-bound path that chain only conveys the proof key; its
+        authority comes from the binding JWS, whose "cnf.jwk" must equal
+        the CMS signer key.  A manufacturer-rooted deployment would
+        instead carry the hardware manufacturer's chain
+        (<xref target="attestation-chain"/>).
+      </t>
+      <t>
+        Note on folding: the sender folded the Hardware-Attestation and
+        Hardware-Trust-Proof fields at about 78 characters, inside tag
+        values and inside the SD-JWT, rather than only at the ";"
+        separators.  That is legal because verifiers remove all such
+        whitespace before interpreting either value
+        (<xref target="header-format"/>, <xref target="dkim-tag-syntax"/>,
+        <xref target="sd-jwt-header"/>).  Verifiers that unfold only per
+        RFC 5322, or that allow folding only at separators, will fail
+        these examples.
+      </t>
+      <t>
+        Note on captures: the DKIM-Signature on each message was added by
+        the MailPal.com submission service, and its h= list does not cover
+        the two Hardware-* fields, so these captures do not demonstrate the
+        DKIM recommendation of this document.  The Authentication-Results
+        fields were stamped by the receiving MailPal.com verifier; their
+        position in the header block does not show where they were added.
+        The Received field records the SMTP transaction, which can begin
+        before the proof is finalized, so ts and iat can differ from it by
+        a few seconds in either direction.  Each message was verified with
+        --no-time-check, as above, so the results are historical.  The
+        captures were made by an implementation of this revision, including
+        its signed input (<xref target="header-format"/>), so a verifier
+        that implements an earlier revision rejects them.
+      </t>
+      <t>
+        NOTE TO RFC EDITOR: Please retain the examples but remove this
+        note.  They are a non-normative aid to implementers and
+        reviewers: complete, independently verifiable messages
+        demonstrating every trust tier in Combined Mode.
+      </t>
+
+      <section anchor="example-email-1">
+        <name>Example 1: Sovereign-Tier TPM (Combined Mode)</name>
+        <t>
+          The sovereign tier: identity urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb, sending as id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com from a Windows 11 laptop with an Intel firmware TPM (PTT).  Mode 1 is an RS256 signature made inside the TPM by the enrolled proof key, and its Registrar binding asserts the sovereign tier; Mode 2 is the Registrar's ES256 SD-JWT, disclosing aid.trust_tier and sub, with "cnf.jwk" equal to the TPM key.
+        </t>
+        <figure>
+          <name>Example 1: Sovereign-Tier TPM (Combined Mode)</name>
+          <artwork type="email"><![CDATA[
+NOTE: '\' line wrapping per RFC 8792
+
+Delivered-To: id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com
+X-Spam-Status: No
+Received: from [172.22.1.90] (unknown [110.143.72.26] (AS1221 \
+Telstra Limited, AU))
+ (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+ by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF5FB753DF25;
+ Mon, 26 Oct 2026 18:22:35 +0000
+Authentication-Results: mail.mailpal.com; none
+Return-Path: <id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com>
+DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+c=relaxed/relaxed; r=y;
+ h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+te
+ :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+ :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+ t=1793038955; x=1793902955; bh=sfKpzPv0zYTN2kTHYT45985YsZjzjrWZfoQS\
+EgjSDuM=
+ ; b=P2ayO8cSKbCmBHtOng6x6Jn31humGXV+UuyHE+IVLdWtSL+A2CYLD3E43Z11kH8\
+j+hwYbJk
+ IGYDFb5lcVNIEddvwXW+YUCGwwJPxMe3ybWbfBl8LudmU7PXR9xIUmVK50EkeimX4q0\
+mKawI5e+
+ K5ak9yroJbw7uD/3Q3eiGKPFUzkBNFUEezJ0tJtWKcxKpTG55ybSBHGfSleiYYeh6K6\
++tg/mNIu
+ 9/Jk6zOBfQX45rcSfPTJBANmWW48b3XBgCRPrZTstfzHEg6Vrrh6WYKUhuqRyFKhdE5\
+3K17Er1O
+ a5hHDFKYyKXOpAuQmS5lX6QCoY/9A66ow0YA2cCey3wEQA==;
+Authentication-Results: mailpal.com; hw-attest=pass header.typ=TPM \
+header.alg=RS256 header.path=registrar header.tier=sovereign \
+header.aid="urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb"
+Authentication-Results: mailpal.com; hw-trust=pass \
+header.mode=identified header.tier=sovereign \
+header.issuer="https://1id.com/realms/agents" \
+header.aid="urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb"
+From: Sovereign Example Agent <id-vwgkj-mhtjp-mfscq-bdchb@mailpal.co\
+m>
+To: id-vwgkj-mhtjp-mfscq-bdchb@mailpal.com
+Subject: Example 1: sovereign-tier TPM (Combined Mode)
+Date: Tue, 27 Oct 2026 04:22:27 +1000
+Message-ID: <179303894721.9756.12186655996631591027@mailpal.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+1lczI1Ni0x
+ IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+b20vcmVhbG
+ 1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk0OCwiZXhwIjoxNzkzMDQyNTQ4LCJub25jZ\
+SI6ImxOUmx
+ 4VVJ5dk1sMjBoOGgyUlFnV09TaVByYmlNUXpJZGtJem5BSXVLbVkiLCJfc2RfYWxnIj\
+oic2hhLTI1
+ NiIsIl9zZCI6WyJzZjhNSTZ0TEszSEpfcV9SdkY3dTBJTWdZRm9XZE1BZEdvaG5WWlV\
+jd2E4IiwiV
+ WY0Qm9samVjc2lrb0pNM0NONG5vWXltd0ZwVmpsdENpeWN1Y1VvT1EzYyJdLCJjbmYi\
+OnsiandrIj
+ p7Imt0eSI6IlJTQSIsIm4iOiJ4dk5ta0hCeW81UXY2UXI4Yk9IR0VjVGN2X1JGZVMzV\
+ENnOVBaOGR
+ HXzVlQm8xRDlCNHJJMjNXRmx5enJXN195Z0k0Nl9QQTFWOTNELThuWG94aTQxQ1oxXz\
+JwWS1YZ1Jr
+ eXVzZHhnWXVMOHJHR2V0amFDOFVtWDNpeDNRdWtuN3ZXRTFkUWJwUThiRFNlWmlDU3N\
+HSkk0dEVMc
+ kdDc2NBQ2dzNVJLR3haMXJNbncxLWF6N3RWUVNUd2lpd3NDeHhLLUltYi1pRHo0MDdq\
+NkZ0WVM2NG
+ dsTTFPSGFrRHdrekpjdW5QM0ZVdzFrYW4zMnZwdER5bGllZXpCdExzTnhxTU5tTlhSN\
+FJKY0pRZXB
+ aV3ZpUTBPRm43OFZ1S1ZIT0pNbk90d0FGRmRzV3RQY3k5VGJ6MmVrZjhSczFmUDcwUE\
+V2NG9oemFv
+ eGgteUZDUFdYaHJQalEiLCJlIjoiQVFBQiJ9fX0.0SgnPcsAkdWOUvL422cPesFhzSf\
+tuXhta_ILl
+ SeupSAZdyX-Sw_7FqJlwVsof9steiI_zrgNUNNAoag-YaogQA~WyJkcmp1LTQ5MGw3d\
+zd3ZjZDSll
+ 1TWp3IiwiYWlkIix7InRydXN0X3RpZXIiOiJzb3ZlcmVpZ24ifV0~WyJ1bUR2MWZ5TD\
+RZdkxjLXBT
+ amNQVVdBIiwic3ViIiwidXJuOmFpZDpnbG9iYWw6aWQtdndna2otbWh0anAtbWZzY3E\
+tYmRjaGIiX
+ Q~
+X-1ID-Contact-Token: 3b3e1ea2
+Hardware-Attestation: v=1;
+ typ=TPM;
+ alg=RS256;
+ h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+ferences:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof:from:
+ to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+s:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof;
+ bh=sfKpzPv0zYTN2kTHYT45985YsZjzjrWZfoQSEgjSDuM;
+ ts=1793038951;
+ chain=MIIMJwYJKoZIhvcNAQcCoIIMGDCCDBQCAQExDTALBglghkgBZQMEAgEwCwYJK\
+oZIhvcNAQc
+ BoIIKfjCCBAkwggLxoAMCAQICFEVJ2w8X4Z7Go18G8sDIbIeIxE9aMA0GCSqGSIb3DQ\
+EBCwUAMC4x
+ DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+2MTAyNjE4M
+ jEyMFoXDTI3MTAyNjE4MjEyMFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+YWlkOmdsb2
+ JhbDppZC12d2drai1taHRqcC1tZnNjcS1iZGNoYjEjMCEGA1UEBRMaaWQtdndna2otb\
+Wh0anAtbWZ
+ zY3EtYmRjaGIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDG82aQcHKjlC\
+/pCvxs4cYR
+ xNy/9EV5LdMKD09nx0b/l4GjUP0HisjbdYWXLOtbv/KAjjr88DVX3cP7ydejGLjUJnX\
+/alj5eBGTK
+ 6x3GBi4vysYZ62NoLxSZfeLHdC6Sfu9YTV1BulDxsNJ5mIJKwYkji0QusYKxwAKCzlE\
+obFnWsyfDX
+ 5rPu1VBJPCKLCwLHEr4iZv6IPPjTuPoW1hLriCUzU4dqQPCTMly6c/cVTDWRqffa+m0\
+PKWJ57MG0u
+ w3Gow2Y1dHhElwlB6lla+JDQ4WfvxW4pUc4kyc63AAUV2xa09zL1NvPZ6R/xGzV8/vQ\
+8S/iiHNqjG
+ H7IUI9ZeGs+NAgMBAAGjgeUwgeIwNAYDVR0RBC0wK4YpdXJuOmFpZDpnbG9iYWw6aWQ\
+tdndna2otb
+ Wh0anAtbWZzY3EtYmRjaGIwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYD\
+VR0OBBYEFB
+ p+KFCVTFXMyZxo4ga3/6WIdfhpMB8GA1UdIwQYMBaAFGciwHngVXI2J7NEovNM34Bd3\
+5auMBcGCis
+ GAQQBg9RfAQEECXNvdmVyZWlnbjAiBgorBgEEAYPUXwECBBQyMDI2LTEwLTI2VDE4Oj\
+IxOjIwWjAP
+ BgorBgEEAYPUXwEDBAEAMA0GCSqGSIb3DQEBCwUAA4IBAQCMeg7C2a+yrblqVQw/TWl\
+l7COdnTayt
+ 1srTUi5Aoe+NjSFJIGzg3ML8ZOp8p28hcg8J8dh9BPnj2jrcYkyJMYD1XMEVR7p2HHp\
+dKWldZKffM
+ fhRCxJqAbSQAA1nTQj6SbdeLEazbSsbyHmfev9/KNk6NL4+hfp6213wIRGpHFxBlaYJ\
+TS5HCtk4g5
+ wA/lh0oxoIJUJzK/OMrmojAaj8zUxhgUmeq8GeqQtT0p9vzeumbtd3JpToSvVejvkwl\
+GJGO1hr6KZ
+ 3kj3r4yLRKYueeXtYrfacQbXTBJGJyZShNM/7Z3834OL5ooXrSL0VKiR6J/aV74nqrB\
+hYD8WceNiU
+ XQXMIIDSDCCAjCgAwIBAgIUSEEYK28j6n6Vhr+w4PvDkiuyQbEwDQYJKoZIhvcNAQEL\
+BQAwJjEMMA
+ oGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMB4XDTI2MDMxNDE0MTM0N\
+1oXDTMxMDM
+ xMzE0MTM0N1owLjEMMAoGA1UECgwDMUlEMR4wHAYDVQQDDBUxSUQgSW50ZXJtZWRpYX\
+RlIENBIEEw
+ ggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC554xsVDRUJ3fMEQISK3ayhz2\
+DTFpHDMvhB
+ P6MHqTt/116HDJNj+2qXJdAmVH8GdXzMwm/tt9nrGrx4Sd3vcdodwpUnF2DhVASZ8e2\
+TiYYB9a4DL
+ uPc3lOw+lwVOqCQmUDBSneQffINU+87WofNtWZQV28Oxy2HFDfFhU/WkI91ayiI/ihH\
+QvQTJpqqZP
+ AbYn+EjD+8AarBbHgKsyyDxW8oOmws82nYhn8eRdz7O3De2w9cpZouJMyWLxG9nwUSO\
+xD3fc1+vbc
+ MeoRmBLRADx9RmhrHOiB2HFW579bsqdkzwQ10/SM5/SXmhSdwajxU/mnkGZCE/vcndt\
+UzJ5B/twjA
+ gMBAAGjZjBkMBIGA1UdEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMB0GA1Ud\
+DgQWBBRnIs
+ B54FVyNiezRKLzTN+AXd+WrjAfBgNVHSMEGDAWgBTDt+lZdcVf+UYPLzmblKpM+SXw8\
+DANBgkqhki
+ G9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1CQPPH9XGzkJ+09iAhUkC3lLNK+hWMpBZ+S2H\
+s8KVl4aMaZ
+ mD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCyMR43GAoCcAZyDsq9pyyfIfXbQO6+dPU0TffL\
++9HgY2qme8
+ XN/vsOqWY3gEvxihrW9inVc16EeDv1iRLcWUZe5o3uS7tZTdS6/bkSb1lu81t9nK8YZ\
+62jxNY2SB9
+ acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzdjS/Sal1/RcATxrzjo8bn22feqeikJCaoq4lO\
+K/kKBZfz9F
+ 0BGNVH95AjChp25bliGYQXMzPbiQuUnm6zqMdIYJg/NtPzg6kujCCAyEwggIJoAMCAQ\
+ICFGciMXFD
+ NUuITsmdETPo+lhP0nQPMA0GCSqGSIb3DQEBCwUAMCYxDDAKBgNVBAoMAzFJRDEWMBQ\
+GA1UEAwwNM
+ UlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQxNDEzNDdaGA8yMDU2MDMwNjE0MTM0N1owJjEM\
+MAoGA1UECg
+ wDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMIIBIjANBgkqhkiG9w0BAQEFAAOCA\
+Q8AMIIBCgK
+ CAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7kXquhEmyoZBED9/BkyzDsld4o3IyFdxvafrD\
+u4e5YDzGIx
+ jHgCvCvwUgbEZt6femOqSM91VPKMuBzMEq0rtHCz7J/vS/nsfw3/NqgFN+j+q1HyHHV\
+x+L3W8wQPW
+ rVLqI2RUFPyU9oeZL6XKaaL0PNIwL2NxAKMuc5uQ/BUPNjDsh7I4M5gD6X9WR/4ZEnv\
+Ud0slil8fJ
+ PLRjw6om2eq/kFl5pXW7mipdf2ufiYEIc1lEBtf34krCWM3PEvnl0Rs4eEirDirxx7P\
+FP18GOgoNy
+ aQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcInRsTfdPQIDAQABo0UwQzASBgNVHRMBAf8ECD\
+AGAQH/AgEB
+ MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUw7fpWXXFX/lGDy85m5SqTPkl8PAwDQY\
+JKoZIhvcNA
+ QELBQADggEBAAhRXzslG92koaKTfGR2KPZvOP3sxZvHBemfwb4tICwaegZlNtHztqP7\
+qcLqWfsHG0
+ Caob8e2rbjMjpPaMY81328kgl7goVPTEuq3Af5joZOArHfizgQl9r5RwT9G3y/AgDTn\
+ZDF6uUKt5P
+ 1u8PUd8t6dUANvIjMvqD6eV8ERioMu+BL7GpbDvy7smvmsCpy1isY0aSlh112LGboJu\
+eGSbiMx35w
+ MKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5iYcUEVptBZW0Ik83sLXJdVG6Z745awnOAQnkr\
+iRwt2b0r/J
+ Rbmu7TQrzAv/K0PTXTuYf3DYxqCl04w8cpgEaPd5rWG4yYxggFvMIIBawIBATBGMC4x\
+DDAKBgNVBA
+ oMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBAhRFSdsPF+GexqNfB\
+vLAyGyHiMR
+ PWjALBglghkgBZQMEAgEwDQYJKoZIhvcNAQELBQAEggEAsuXbipKCEQu16+vqlg2UdO\
+xXevR/irGt
+ SPSCw3JyuEKcwfsQX6rM3rkqNTb3Z7LvXyG8MZ4Dff/Ex1I6J8gciX2qlOE99MDNzqD\
+2D86MSsQHi
+ tWWeIxbfbr/tq90kWuzq8MKTEJXTTMi6ZBBP6Z/wAmdGkkCdGbEAzdgYQJO1fjKt8Qm\
+QZZkHrXVAE
+ nPszcmJWq6yUHCgm2IRj+nZFH68+rt+SLLrACWJFVjPRSGYRKK0p5P8IdxFfTIgaUrI\
+yEsHa0yNto
+ iKHgJ9/FxpT3UfaCmQdDXDie3bHY+GZE9PhnwzRC6WfuL2bVNcevHd/8bd3+0NsQ1LW\
+F2gN/GxAfQ
+ AA==;
+ aid=urn:aid:global:id-vwgkj-mhtjp-mfscq-bdchb;
+ bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+lwIjoiYWly
+ cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+1zL2FnZW50
+ cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLXZ3Z2tqLW1odGpwLW1mc2NxLWJkY2h\
+iIiwiaWF0I
+ joxNzkzMDM4OTQ4LCJleHAiOjE3OTMwNDI1NDgsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+UlNBIiwibi
+ I6Inh2Tm1rSEJ5bzVRdjZRcjhiT0hHRWNUY3ZfUkZlUzNUQ2c5UFo4ZEdfNWVCbzFEO\
+UI0ckkyM1d
+ GbHl6clc3X3lnSTQ2X1BBMVY5M0QtOG5Yb3hpNDFDWjFfMnBZLVhnUmt5dXNkeGdZdU\
+w4ckdHZXRq
+ YUM4VW1YM2l4M1F1a243dldFMWRRYnBROGJEU2VaaUNTc0dKSTR0RUxyR0NzY0FDZ3M\
+1UktHeFoxc
+ k1udzEtYXo3dFZRU1R3aWl3c0N4eEstSW1iLWlEejQwN2o2RnRZUzY0Z2xNMU9IYWtE\
+d2t6SmN1bl
+ AzRlV3MWthbjMydnB0RHlsaWVlekJ0THNOeHFNTm1OWFI0UkpjSlFlcFpXdmlRME9Gb\
+jc4VnVLVkh
+ PSk1uT3R3QUZGZHNXdFBjeTlUYnoyZWtmOFJzMWZQNzBQRXY0b2h6YW94aC15RkNQV1\
+hoclBqUSIs
+ ImUiOiJBUUFCIn19LCJhaWQiOnsidHJ1c3RfdGllciI6InNvdmVyZWlnbiJ9fQ.HXvD\
+5qUNaVCmua
+ jnheKCe4dPNrc-C0zlKe37wftpGNMs91MdiUQOI_yU5MbgELhposgst0heEv5m1C5MD\
+eZIZw
+
+Hardware-attested email from the AIRS reference implementation.
+Identity tier: sovereign
+]]></artwork>
+        </figure>
+      </section>
+
+      <section anchor="example-email-2">
+        <name>Example 2: Portable-Tier PIV/YubiKey (Combined Mode)</name>
+        <t>
+          The portable tier: a YubiKey 5 (firmware 5.4.3) PIV key in slot 9a (ECDSA P-256), passed through to a Windows 11 guest.  Mode 1 is an ES256 signature made inside the YubiKey; Mode 2 discloses aid.trust_tier "portable".
+        </t>
+        <figure>
+          <name>Example 2: Portable-Tier PIV/YubiKey (Combined Mode)</name>
+          <artwork type="email"><![CDATA[
+NOTE: '\' line wrapping per RFC 8792
+
+Delivered-To: id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com
+X-Spam-Status: No
+Received: from [169.254.206.65] (unknown [110.143.72.26] (AS1221 \
+Telstra Limited, AU))
+ (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+ by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF608253E125;
+ Mon, 26 Oct 2026 18:22:37 +0000
+Authentication-Results: mail.mailpal.com; none
+Return-Path: <id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com>
+DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+c=relaxed/relaxed; r=y;
+ h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+te
+ :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+ :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+ t=1793038957; x=1793902957; bh=UpNv/u4NEGGV0VPACHjdNjyQfrzCqbgBATph\
+JjFgGIs=
+ ; b=I6himCc+0EMdz0C3bZ011q3uFhBfMccwWExmrvsAq4aSpAWupkxcgQm/HoDm2VP\
+kmxEq0ei
+ mYTqjng3+Pabgzo12ySH0x/6RrNBMZEg7BinMREhBmcqhg95PH18AxX3Z19EmHAdntB\
+NaxJC/eR
+ Ve5HP0PP3W7/o+bFnSK60QlEJy0Chsr8Upwl/vrqxEcsJdWemWZtDvbtYG5PuhrrfBJ\
+UmaTZy0U
+ q67+ansM3IcYHeoXM5pJMUDfoct6ytnWr1VQzKRDPkGQfyeyLt5D0OnffeZCVNIm2xz\
+RfZQTcgY
+ Vu6hT14TdlwpDdbCLVLK/LImPTsxLzvbP4qQcyXBF+C9vQ==;
+Authentication-Results: mailpal.com; hw-attest=pass header.typ=PIV \
+header.alg=ES256 header.path=registrar header.tier=portable \
+header.aid="urn:aid:global:id-csnxq-phcmb-pvcmm-xcdmb"
+Authentication-Results: mailpal.com; hw-trust=pass \
+header.mode=identified header.tier=portable header.issuer="https://1\
+id.com/realms/agents" header.aid="urn:aid:global:id-csnxq-phcmb-pvcm\
+m-xcdmb"
+From: AIRS-example-portable <id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com>
+To: id-csnxq-phcmb-pvcmm-xcdmb@mailpal.com
+Subject: Example 2: portable-tier PIV/YubiKey (Combined Mode)
+Date: Tue, 27 Oct 2026 05:22:27 +1100
+Message-ID: <179303894757.9288.17119535157055262523@mailpal.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+1lczI1Ni0x
+ IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+b20vcmVhbG
+ 1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk1MiwiZXhwIjoxNzkzMDQyNTUyLCJub25jZ\
+SI6ImtjYzZ
+ yOGNRMGpOaFNBOGY1aW9CTG12VnF6Vl8zbkR0S2FJSF9RSUsteHciLCJfc2RfYWxnIj\
+oic2hhLTI1
+ NiIsIl9zZCI6WyJBYVA2RGQ1Q0YyNmtzNXpGOVExeG9qeFVWYXFpX25MeFNvUVFoeVd\
+XMFMwIiwiW
+ Ut1Wk56UUdBeDFLVG93NzJSNDF5aTJZdXdMUmZSZXk5ZzJlX08wZWhsWSJdLCJjbmYi\
+OnsiandrIj
+ p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoicEk4V2hxQ1lIdkFUdlJlOGFKR\
+lh4Vm1fbjF
+ 5enF2MVJQTzJNZHpfZm1xNCIsInkiOiJBdy1xd2YxZ2dhNzZ5cTJPY1EtTDBLLS1BbE\
+5MYnB1TVRZ
+ VEZMLVNvMVFRIn19fQ.hhY3QBXmIQhEjn8dFeWOdEKgfbsvkR4i2AIjNBUba3p8ftxm\
+f9hhYJZXAl
+ _OJHNc15EFrn2e5uG-wNmzX5EHsQ~WyJ2LTBhU1ZPVDA3ZGp5UV9EQ3I3SF9nIiwiYW\
+lkIix7InRy
+ dXN0X3RpZXIiOiJwb3J0YWJsZSJ9XQ~WyJvQ1RJRlc3OEVEemFtSzFDOHV6dGhRIiwi\
+c3ViIiwidX
+ JuOmFpZDpnbG9iYWw6aWQtY3NueHEtcGhjbWItcHZjbW0teGNkbWIiXQ~
+X-1ID-Contact-Token: ea8ed697
+Hardware-Attestation: v=1;
+ typ=PIV;
+ alg=ES256;
+ h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+ferences:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof:from:
+ to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+s:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof;
+ bh=UpNv_u4NEGGV0VPACHjdNjyQfrzCqbgBATphJjFgGIs;
+ ts=1793038953;
+ chain=MIIKmwYJKoZIhvcNAQcCoIIKjDCCCogCAQExDTALBglghkgBZQMEAgEwCwYJK\
+oZIhvcNAQc
+ BoIIJsjCCAz0wggIloAMCAQICFC8qACUIEaMu7MxzpbPkTYQR3bc4MA0GCSqGSIb3DQ\
+EBCwUAMC4x
+ DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+2MTAyNjE1M
+ zM1N1oXDTI3MTAyNjE1MzM1N1owZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+YWlkOmdsb2
+ JhbDppZC1jc254cS1waGNtYi1wdmNtbS14Y2RtYjEjMCEGA1UEBRMaaWQtY3NueHEtc\
+GhjbWItcHZ
+ jbW0teGNkbWIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASkjxaGoJge8BO9F7xokV\
+fFWb+fXLOq
+ /VE87Yx3P9+argMPqsH9YIGu+sqtjnEPi9CvvgJTS26bjE2ExS/kqNUEo4HkMIHhMDQ\
+GA1UdEQQtM
+ CuGKXVybjphaWQ6Z2xvYmFsOmlkLWNzbnhxLXBoY21iLXB2Y21tLXhjZG1iMAwGA1Ud\
+EwEB/wQCMA
+ AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQdFrOnTCmB5XL1YzlTDUU/2kQFpDAfB\
+gNVHSMEGDA
+ WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAWBgorBgEEAYPUXwEBBAhwb3J0YWJsZTAiBg\
+orBgEEAYPU
+ XwECBBQyMDI2LTEwLTI2VDE1OjMzOjU3WjAPBgorBgEEAYPUXwEDBAEAMA0GCSqGSIb\
+3DQEBCwUAA
+ 4IBAQCyrHm0pyAJmiRKeTGHjs768WbCaSVglZ4DgLCzYodHKY6/CuFdcubPDY7kYIGH\
+4GYHFxmavr
+ pUeWziAbxh4ufMZfDJCUAx3TfbOp6cvCvaHvhgPXwYvj9YOoSmfnsEHbYV6mwiFsTJO\
+mKJYEjNtGB
+ +ndbGL/V90Ruk5z4ybS0B+0RjCoiT9LHx11v7Unl6+UiTcKk5Jlp6BGKsM6GZclfl/D\
+fPmIB0Mv6j
+ t0odAzmAN+uRRamGRUvVxzhSSEjsANDLvW70XKmNCWhxX/wSxp8kHvb9L6vWwDVd5U5\
+SqjnghTNmo
+ +UvcnT2gbseg2QxjSQ1Lc9BKtX9MpbYIQkkIHT1MIIDSDCCAjCgAwIBAgIUSEEYK28j\
+6n6Vhr+w4P
+ vDkiuyQbEwDQYJKoZIhvcNAQELBQAwJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xS\
+UQgUm9vdCB
+ DQSBBMB4XDTI2MDMxNDE0MTM0N1oXDTMxMDMxMzE0MTM0N1owLjEMMAoGA1UECgwDMU\
+lEMR4wHAYD
+ VQQDDBUxSUQgSW50ZXJtZWRpYXRlIENBIEEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwA\
+wggEKAoIBA
+ QC554xsVDRUJ3fMEQISK3ayhz2DTFpHDMvhBP6MHqTt/116HDJNj+2qXJdAmVH8GdXz\
+Mwm/tt9nrG
+ rx4Sd3vcdodwpUnF2DhVASZ8e2TiYYB9a4DLuPc3lOw+lwVOqCQmUDBSneQffINU+87\
+WofNtWZQV2
+ 8Oxy2HFDfFhU/WkI91ayiI/ihHQvQTJpqqZPAbYn+EjD+8AarBbHgKsyyDxW8oOmws8\
+2nYhn8eRdz
+ 7O3De2w9cpZouJMyWLxG9nwUSOxD3fc1+vbcMeoRmBLRADx9RmhrHOiB2HFW579bsqd\
+kzwQ10/SM5
+ /SXmhSdwajxU/mnkGZCE/vcndtUzJ5B/twjAgMBAAGjZjBkMBIGA1UdEwEB/wQIMAYB\
+Af8CAQAwDg
+ YDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRnIsB54FVyNiezRKLzTN+AXd+WrjAfBgNVH\
+SMEGDAWgBT
+ Dt+lZdcVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1\
+CQPPH9XGzk
+ J+09iAhUkC3lLNK+hWMpBZ+S2Hs8KVl4aMaZmD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCy\
+MR43GAoCcA
+ ZyDsq9pyyfIfXbQO6+dPU0TffL+9HgY2qme8XN/vsOqWY3gEvxihrW9inVc16EeDv1i\
+RLcWUZe5o3
+ uS7tZTdS6/bkSb1lu81t9nK8YZ62jxNY2SB9acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzd\
+jS/Sal1/Rc
+ ATxrzjo8bn22feqeikJCaoq4lOK/kKBZfz9F0BGNVH95AjChp25bliGYQXMzPbiQuUn\
+m6zqMdIYJg
+ /NtPzg6kujCCAyEwggIJoAMCAQICFGciMXFDNUuITsmdETPo+lhP0nQPMA0GCSqGSIb\
+3DQEBCwUAM
+ CYxDDAKBgNVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQx\
+NDEzNDdaGA
+ 8yMDU2MDMwNjE0MTM0N1owJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vd\
+CBDQSBBMII
+ BIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7\
+kXquhEmyoZ
+ BED9/BkyzDsld4o3IyFdxvafrDu4e5YDzGIxjHgCvCvwUgbEZt6femOqSM91VPKMuBz\
+MEq0rtHCz7
+ J/vS/nsfw3/NqgFN+j+q1HyHHVx+L3W8wQPWrVLqI2RUFPyU9oeZL6XKaaL0PNIwL2N\
+xAKMuc5uQ/
+ BUPNjDsh7I4M5gD6X9WR/4ZEnvUd0slil8fJPLRjw6om2eq/kFl5pXW7mipdf2ufiYE\
+Ic1lEBtf34
+ krCWM3PEvnl0Rs4eEirDirxx7PFP18GOgoNyaQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcI\
+nRsTfdPQID
+ AQABo0UwQzASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4\
+EFgQUw7fpW
+ XXFX/lGDy85m5SqTPkl8PAwDQYJKoZIhvcNAQELBQADggEBAAhRXzslG92koaKTfGR2\
+KPZvOP3sxZ
+ vHBemfwb4tICwaegZlNtHztqP7qcLqWfsHG0Caob8e2rbjMjpPaMY81328kgl7goVPT\
+Euq3Af5joZ
+ OArHfizgQl9r5RwT9G3y/AgDTnZDF6uUKt5P1u8PUd8t6dUANvIjMvqD6eV8ERioMu+\
+BL7GpbDvy7
+ smvmsCpy1isY0aSlh112LGboJueGSbiMx35wMKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5i\
+YcUEVptBZW
+ 0Ik83sLXJdVG6Z745awnOAQnkriRwt2b0r/JRbmu7TQrzAv/K0PTXTuYf3DYxqCl04w\
+8cpgEaPd5r
+ WG4yYxgbAwga0CAQEwRjAuMQwwCgYDVQQKDAMxSUQxHjAcBgNVBAMMFTFJRCBJbnRlc\
+m1lZGlhdGU
+ gQ0EgQQIULyoAJQgRoy7szHOls+RNhBHdtzgwCwYJYIZIAWUDBAIBMAoGCCqGSM49BA\
+MCBEcwRQIh
+ AKFhfNKLLvKXKVss7stuHLMStNLtowHLjT8NOX2ZJx5RAiAQILg+qS6utr0+sMLdgit\
+LP+JfpXQPB
+ NWOdykrUuBA4w==;
+ aid=urn:aid:global:id-csnxq-phcmb-pvcmm-xcdmb;
+ bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+lwIjoiYWly
+ cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+1zL2FnZW50
+ cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWNzbnhxLXBoY21iLXB2Y21tLXhjZG1\
+iIiwiaWF0I
+ joxNzkzMDM4OTUyLCJleHAiOjE3OTMwNDI1NTIsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+RUMiLCJjcn
+ YiOiJQLTI1NiIsIngiOiJwSThXaHFDWUh2QVR2UmU4YUpGWHhWbV9uMXl6cXYxUlBPM\
+k1kel9mbXE
+ 0IiwieSI6IkF3LXF3ZjFnZ2E3NnlxMk9jUS1MMEstLUFsTkxicHVNVFlURkwtU28xUV\
+EifX0sImFp
+ ZCI6eyJ0cnVzdF90aWVyIjoicG9ydGFibGUifX0.7beiQevBcufYiV9i64nPXSYlE84\
+jdn8eOVQSa
+ SUL9e1AC12r8JGr2OYf9MG76gcqZl52aZzloURiGbRFDnlY4Q
+
+Hardware-attested email from the AIRS reference implementation.
+Identity tier: portable
+]]></artwork>
+        </figure>
+      </section>
+
+      <section anchor="example-email-3">
+        <name>Example 3: Enclave-Tier Apple Secure Enclave (Combined Mode)</name>
+        <t>
+          The enclave tier: a non-extractable P-256 key in the Apple Secure Enclave of an Apple M4 Mac running macOS 26.  Mode 1 is an ES256 signature made inside the Secure Enclave; Mode 2 discloses aid.trust_tier "enclave".  The Registrar accepted this binding on trust on first use, without vendor attestation, so to a Relying Party the enclave tier here records the enrollee's assertion of enclave custody rather than verified extraction resistance (see the enclave tier of <xref target="I-D.drake-agent-identity-registry"/>).
+        </t>
+        <figure>
+          <name>Example 3: Enclave-Tier Apple Secure Enclave (Combined Mode)</name>
+          <artwork type="email"><![CDATA[
+NOTE: '\' line wrapping per RFC 8792
+
+Delivered-To: id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com
+X-Spam-Status: No
+Received: from mac-mini.local (unknown [110.143.72.26] (AS1221 \
+Telstra Limited, AU))
+ (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+ by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBFCA8453E525;
+ Mon, 26 Oct 2026 18:26:14 +0000
+Authentication-Results: mail.mailpal.com; none
+Return-Path: <id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com>
+DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+c=relaxed/relaxed; r=y;
+ h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+te
+ :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+ :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+ t=1793039174; x=1793903174; bh=YSy6Vho/eRXT+cCUetX+TJe4uKZh1xp9dV0k\
+mDw25Zs=
+ ; b=kjulN3yLJmswjObE7zmSAGhh5rC8kVnsZ2Yhe/AVA2AJbmr4KaLQWQaaA8eR9ro\
+ubc1zCqt
+ 4UgUu0xTMqQSLn2d7Cj6R7E7MQEHbn0tqT9V46clryamwTBHmJN5mgRuV4LhN73Flz6\
+7y2ehFc+
+ G6n8tIZ8+dbbbYru/PLCAlny9EQN1mVCQJquteJYX+d11hAK6Kojd7gldrBcl1zhtLQ\
+FVmvDSY+
+ OynaWSphdVcOE4F2nLPqdB2E6yobZ22M5rTKkhR7/w442FUB3LkdpVKECovmPTAwfIl\
+4J8gcC8y
+ l58F/KltE2NEaYNTXAN9pbjRIG7TRssljh60iYMqvuTa3A==;
+Authentication-Results: mailpal.com; hw-attest=pass header.typ=ENC \
+header.alg=ES256 header.path=registrar header.tier=enclave \
+header.aid="urn:aid:global:id-ddmzh-dpcfv-fqrxj-xmxsj"
+Authentication-Results: mailpal.com; hw-trust=pass \
+header.mode=identified header.tier=enclave header.issuer="https://1i\
+d.com/realms/agents" header.aid="urn:aid:global:id-ddmzh-dpcfv-fqrxj\
+-xmxsj"
+From: Enclave Example Agent <id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com>
+To: id-ddmzh-dpcfv-fqrxj-xmxsj@mailpal.com
+Subject: Example 3: enclave-tier Apple Secure Enclave (Combined Mode)
+Date: Tue, 27 Oct 2026 04:26:04 +1000
+Message-ID: <179303916458.69111.7026468321028687105@mailpal.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+1lczI1Ni0x
+ IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+b20vcmVhbG
+ 1zL2FnZW50cyIsImlhdCI6MTc5MzAzOTE2OSwiZXhwIjoxNzkzMDQyNzY5LCJub25jZ\
+SI6Ijhud0h
+ IbEN1S19mazUxS2syX0lWX0lnRXhuYjRmOTRmdFBUSmFjamlDTDgiLCJfc2RfYWxnIj\
+oic2hhLTI1
+ NiIsIl9zZCI6WyItR3hxWUFXaW9haFJzOE1mYXZINzhiczJQakZUeWZ4V2ZwaVA3OGp\
+Pd2tnIiwiR
+ 1RWSkV0bmc3NEYyUFlLUDFuRGtmb3BXLXFYbV9kc3hfRXVhMXdKaGNEayJdLCJjbmYi\
+OnsiandrIj
+ p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiNXA4azducXU2d09nSDJjaHlpZ\
+1ZWV0EtNk1
+ wYVFVRFN6bU9GcjZjNEpZOCIsInkiOiJZV2hRakI3RGZuZ084ZzlDTVZLM3lKOFZlRj\
+BjLUx5bnQx
+ YnRVc0tHOTVFIn19fQ.vN-BoLrkIcw5iZXiN2_1ZEsNpP2jfdfYSBUHmhNnXgImgQ1r\
+5CJj4_8ggn
+ DnLzRudCLsqP171_YB4IXxNLGNjg~WyJyWE80eTVoQW44Z0txaGh2V1J0blR3IiwiYW\
+lkIix7InRy
+ dXN0X3RpZXIiOiJlbmNsYXZlIn1d~WyJqTFR2ZVUxLVVLMVZUNDBkUmcteTB3Iiwic3\
+ViIiwidXJu
+ OmFpZDpnbG9iYWw6aWQtZGRtemgtZHBjZnYtZnFyeGoteG14c2oiXQ~
+X-1ID-Contact-Token: dc58e959
+Hardware-Attestation: v=1;
+ typ=ENC;
+ alg=ES256;
+ h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+ferences:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof:from:
+ to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+s:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof;
+ bh=YSy6Vho_eRXT-cCUetX-TJe4uKZh1xp9dV0kmDw25Zs;
+ ts=1793039171;
+ chain=MIIKmgYJKoZIhvcNAQcCoIIKizCCCocCAQExDTALBglghkgBZQMEAgEwCwYJK\
+oZIhvcNAQc
+ BoIIJsTCCAzwwggIkoAMCAQICFEfhsJpW3QQftqnKgxIbwg6GSxA7MA0GCSqGSIb3DQ\
+EBCwUAMC4x
+ DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+2MTAyNjE4M
+ jAyM1oXDTI3MTAyNjE4MjAyM1owZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+YWlkOmdsb2
+ JhbDppZC1kZG16aC1kcGNmdi1mcXJ4ai14bXhzajEjMCEGA1UEBRMaaWQtZGRtemgtZ\
+HBjZnYtZnF
+ yeGoteG14c2owWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATmnyTueq7rA6AfZyHKKB\
+VVYD7oylpB
+ QNLOY4Wvpzglj2FoUIwew354DvIPQjFSt8ifFXhdHPi8p7dW7VLChveRo4HjMIHgMDQ\
+GA1UdEQQtM
+ CuGKXVybjphaWQ6Z2xvYmFsOmlkLWRkbXpoLWRwY2Z2LWZxcnhqLXhteHNqMAwGA1Ud\
+EwEB/wQCMA
+ AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRtG4VeMQgfQG6sDO7ysTp6Tk24IjAfB\
+gNVHSMEGDA
+ WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAVBgorBgEEAYPUXwEBBAdlbmNsYXZlMCIGCi\
+sGAQQBg9Rf
+ AQIEFDIwMjYtMTAtMjZUMTg6MjA6MjJaMA8GCisGAQQBg9RfAQMEAQAwDQYJKoZIhvc\
+NAQELBQADg
+ gEBAFSsqyipRmXsiOtNO7ayqEy3v1TWUJdcP/yH9a1EvOOu/WUoznkOAzu/uC5kCmKF\
+ceDdPGleRH
+ OVX8rCqrDQHjFqSJiCSHppPreHUFIxbqY8e6T+pJFr5Gpyc05RyiqaWKlnlIfi1j996\
+MZ6LUU1zaY
+ 2yZPFijCusyNUF1Jo8IvwfUjU/wvZBKq/SBQmH+C9il/en4++ltE6wx8uSiQCF9IfYD\
+SaF9z21ZKp
+ PYq+n7K4VrtTFyUu/HEso2rslAYNy4WdLGXxXSTXiqyX6JGdf9pKgJfFff6M1sjnamG\
+PE6gkY/zRv
+ CMy/YSJN0qXm4QH0SnU6aZy1YaZ2AaG5RoO91owggNIMIICMKADAgECAhRIQRgrbyPq\
+fpWGv7Dg+8
+ OSK7JBsTANBgkqhkiG9w0BAQsFADAmMQwwCgYDVQQKDAMxSUQxFjAUBgNVBAMMDTFJR\
+CBSb290IEN
+ BIEEwHhcNMjYwMzE0MTQxMzQ3WhcNMzEwMzEzMTQxMzQ3WjAuMQwwCgYDVQQKDAMxSU\
+QxHjAcBgNV
+ BAMMFTFJRCBJbnRlcm1lZGlhdGUgQ0EgQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADC\
+CAQoCggEBA
+ LnnjGxUNFQnd8wRAhIrdrKHPYNMWkcMy+EE/owepO3/XXocMk2P7apcl0CZUfwZ1fMz\
+Cb+232esav
+ HhJ3e9x2h3ClScXYOFUBJnx7ZOJhgH1rgMu49zeU7D6XBU6oJCZQMFKd5B98g1T7zta\
+h821ZlBXbw
+ 7HLYcUN8WFT9aQj3VrKIj+KEdC9BMmmqpk8Btif4SMP7wBqsFseAqzLIPFbyg6bCzza\
+diGfx5F3Ps
+ 7cN7bD1ylmi4kzJYvEb2fBRI7EPd9zX69twx6hGYEtEAPH1GaGsc6IHYcVbnv1uyp2T\
+PBDXT9Izn9
+ JeaFJ3BqPFT+aeQZkIT+9yd21TMnkH+3CMCAwEAAaNmMGQwEgYDVR0TAQH/BAgwBgEB\
+/wIBADAOBg
+ NVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFGciwHngVXI2J7NEovNM34Bd35auMB8GA1UdI\
+wQYMBaAFMO
+ 36Vl1xV/5Rg8vOZuUqkz5JfDwMA0GCSqGSIb3DQEBCwUAA4IBAQCFQMWZU369nhIrUJ\
+A88f1cbOQn
+ 7T2ICFSQLeUs0r6FYykFn5LYezwpWXhoxpmYPb6M6sLhaPk576tWwnvJaImZ9D18LIx\
+HjcYCgJwBn
+ IOyr2nLJ8h9dtA7r509TRN98v70eBjaqZ7xc3++w6pZjeAS/GKGtb2KdVzXoR4O/WJE\
+txZRl7mje5
+ Lu1lN1Lr9uRJvWW7zW32crxhnraPE1jZIH1pxf2rH0xY2MFKxfvJOMcQBWf9Do4zN2N\
+L9JqXX9FwB
+ PGvOOjxufbZ96p6KQkJqiriU4r+QoFl/P0XQEY1Uf3kCMKGnbluWIZhBczM9uJC5Seb\
+rOox0hgmD8
+ 20/ODqS6MIIDITCCAgmgAwIBAgIUZyIxcUM1S4hOyZ0RM+j6WE/SdA8wDQYJKoZIhvc\
+NAQELBQAwJ
+ jEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vdCBDQSBBMCAXDTI2MDMxNDE0\
+MTM0N1oYDz
+ IwNTYwMzA2MTQxMzQ3WjAmMQwwCgYDVQQKDAMxSUQxFjAUBgNVBAMMDTFJRCBSb290I\
+ENBIEEwggE
+ iMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDgJKSWsnkknCqkdCRJsfouhBmnuR\
+eq6ESbKhkE
+ QP38GTLMOyV3ijcjIV3G9p+sO7h7lgPMYjGMeAK8K/BSBsRm3p96Y6pIz3VU8oy4HMw\
+SrSu0cLPsn
+ +9L+ex/Df82qAU36P6rUfIcdXH4vdbzBA9atUuojZFQU/JT2h5kvpcppovQ80jAvY3E\
+Aoy5zm5D8F
+ Q82MOyHsjgzmAPpf1ZH/hkSe9R3SyWKXx8k8tGPDqibZ6r+QWXmldbuaKl1/a5+JgQh\
+zWUQG1/fiS
+ sJYzc8S+eXRGzh4SKsOKvHHs8U/XwY6Cg3JpDw01llI6oLosytZ2hc7q/wwpBVwJwid\
+GxN909AgMB
+ AAGjRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQ\
+WBBTDt+lZd
+ cVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEACFFfOyUb3aShopN8ZHYo\
+9m84/ezFm8
+ cF6Z/Bvi0gLBp6BmU20fO2o/upwupZ+wcbQJqhvx7atuMyOk9oxjzXfbySCXuChU9MS\
+6rcB/mOhk4
+ Csd+LOBCX2vlHBP0bfL8CANOdkMXq5Qq3k/W7w9R3y3p1QA28iMy+oPp5XwRGKgy74E\
+vsalsO/Luy
+ a+awKnLWKxjRpKWHXXYsZugm54ZJuIzHfnAwqvqh9fLQQT4jPYnE9fX6s/PFn1gjmJh\
+xQRWm0FlbQ
+ iTzewtcl1UbpnvjlrCc4BCeSuJHC3ZvSv8lFua7tNCvMC/8rQ9NdO5h/cNjGoKXTjDx\
+ymARo93mtY
+ bjJjGBsDCBrQIBATBGMC4xDDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVyb\
+WVkaWF0ZSB
+ DQSBBAhRH4bCaVt0EH7apyoMSG8IOhksQOzALBglghkgBZQMEAgEwCgYIKoZIzj0EAw\
+IERzBFAiEA
+ phw5eb074Uo1Km81kCThIlIN5Xoh/mzHeKThTOPFWRYCIGVgM2fMyEgXM2nQFHfN4Zt\
+0gVPsJWW1m
+ bEGbtwta6jq;
+ aid=urn:aid:global:id-ddmzh-dpcfv-fqrxj-xmxsj;
+ bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+lwIjoiYWly
+ cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+1zL2FnZW50
+ cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWRkbXpoLWRwY2Z2LWZxcnhqLXhteHN\
+qIiwiaWF0I
+ joxNzkzMDM5MTY5LCJleHAiOjE3OTMwNDI3NjksImNuZiI6eyJqd2siOnsia3R5Ijoi\
+RUMiLCJjcn
+ YiOiJQLTI1NiIsIngiOiI1cDhrN25xdTZ3T2dIMmNoeWlnVlZXQS02TXBhUVVEU3ptT\
+0ZyNmM0Slk
+ 4IiwieSI6IllXaFFqQjdEZm5nTzhnOUNNVkszeUo4VmVGMGMtTHludDFidFVzS0c5NU\
+UifX0sImFp
+ ZCI6eyJ0cnVzdF90aWVyIjoiZW5jbGF2ZSJ9fQ.2CeTSqe9xWkl6LEks5ZigshS7xXT\
+lNg9RVwWfD
+ E_njFNQG4eJ9A1DVqqOpeYhoUVeVLu8_KJ3qSPvXfGMn4f9Q
+
+Hardware-attested email from the AIRS reference implementation.
+Identity tier: enclave
+]]></artwork>
+        </figure>
+      </section>
+
+      <section anchor="example-email-4">
+        <name>Example 4: Virtual-Tier vTPM (Combined Mode)</name>
+        <t>
+          The virtual tier: a VMware virtual TPM 2.0 (manufacturer "VMW") in a Windows 11 guest; the Registrar assigns the virtual tier to a hypervisor-provided TPM.  Mode 1 is an RS256 signature made inside the vTPM by the enrolled proof key; Mode 2 discloses aid.trust_tier "virtual".
+        </t>
+        <figure>
+          <name>Example 4: Virtual-Tier vTPM (Combined Mode)</name>
+          <artwork type="email"><![CDATA[
+NOTE: '\' line wrapping per RFC 8792
+
+Delivered-To: id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com
+X-Spam-Status: No
+Received: from [172.22.1.46] (unknown [110.143.72.26] (AS1221 \
+Telstra Limited, AU))
+ (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+ by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF39CB93D925;
+ Mon, 26 Oct 2026 18:21:17 +0000
+Authentication-Results: mail.mailpal.com; none
+Return-Path: <id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com>
+DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+c=relaxed/relaxed; r=y;
+ h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+te
+ :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+ :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+ t=1793038878; x=1793902878; bh=vj+a5DUTo47HIO9SMZ9mTYE7CmfNEiSlFJWv\
+HPz0cZM=
+ ; b=mpXMiOSY8Hoa8bLZVx8Y+is3tKSOMA4W/tjk6tG2H0DffJkc2qyiHv8MO6zWodl\
+f6MCggUt
+ UWVevSSX14JNX8pBXkKqxRocgrY/M32noSuJoZfyIpwRhnwTVbCPRuZS2QFZWGSTFsV\
+1odtiP6r
+ t35tg/gBLdOwPS0AbaN0ADECGOscZTbD7r8tlQUvvsPAY8M+ZHpfDFIpMOgRyp1gCK9\
+UtzYRfmP
+ k7a9f96O/kaynk6qVFHTGWbg6j5zMUAy60PEQ7nobfDXNgiY39MsXGRf9+568s0yptH\
+KSwaJpCC
+ h5qXV462dWOkPTFSb0XUF4uqsuET6eKY8WUCuwk7npU82g==;
+Authentication-Results: mailpal.com; hw-attest=pass header.typ=VRT \
+header.alg=RS256 header.path=registrar header.tier=virtual \
+header.aid="urn:aid:global:id-tpfkx-qdzts-wmtbm-rnjpc"
+Authentication-Results: mailpal.com; hw-trust=pass \
+header.mode=identified header.tier=virtual header.issuer="https://1i\
+d.com/realms/agents" header.aid="urn:aid:global:id-tpfkx-qdzts-wmtbm\
+-rnjpc"
+From: AIRS-example-virtual <id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com>
+To: id-tpfkx-qdzts-wmtbm-rnjpc@mailpal.com
+Subject: Example 4: virtual-tier vTPM (Combined Mode)
+Date: Tue, 27 Oct 2026 05:21:02 +1100
+Message-ID: <179303886224.8844.10523257280033703201@mailpal.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+1lczI1Ni0x
+ IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+b20vcmVhbG
+ 1zL2FnZW50cyIsImlhdCI6MTc5MzAzODg3MywiZXhwIjoxNzkzMDQyNDczLCJub25jZ\
+SI6IlQ5T2J
+ uN1Z4STFRbWJOZUlhQlNDRVlvRW41VktpdC1NSUVPLUlRN3MxYkUiLCJfc2RfYWxnIj\
+oic2hhLTI1
+ NiIsIl9zZCI6WyJKazY5MlF4d3lUTDVZTUQ4Q0ZrVXVQYTJJNC1rSkwzdzVtbzIzRDB\
+Eci1rIiwiN
+ 094VmNzYkVnLUpzclAwam9PdWt1VElJZ3RGemo0X1FOQ094TGNmUjF4RSJdLCJjbmYi\
+OnsiandrIj
+ p7Imt0eSI6IlJTQSIsIm4iOiI1cnppMXpkMkgxOVVNRlpOUURnajR3dWdpaGJHZHlkL\
+XA5Rm1qYms
+ 0T3RDTHlkMWxPcE5sZXVQMmEzYVJVdUFXMVExUHR2bGVNWWRFX1BfTWVrR2J4MDNHTC\
+1NaElZNURw
+ MkpZenZFLUtSZS1KM19XSE1JR1lnNlN0TklCcU5XU3ZQZFFsdnBUamNKMVVCRmYwMUN\
+IandaMk90e
+ mwyMlRmUEstMmE5ckY4aHFBSjZkQUN2QkxnaV9vMzd4VDdrNjlSRnp2WGN2WV9hbDN6\
+VzdpN3FWbU
+ FSNmxzclIxUjB1aGpHcng4UUJQOUc3aXdkbTBrWEtaQk13MVVKeFpHcFdsazlHbDdNM\
+lMwem9WOUx
+ hMXczT0FZU0VIZnp3NnpzUWllME9WNndONDkyX2dSWE5jTTZndmpkZlBaTklVRHd3Sm\
+FxRWl5N1Vx
+ bkZ1WjUzc29Gc2x3TFEiLCJlIjoiQVFBQiJ9fX0.HpIn6h-jFj7SuOyq2N3jvZWqR1-\
+apqOJPtMVp
+ 3TWyrOUzWoMGG5JI7_8g7WQfw3KaBWkTVeu8DkJRQ3PECNl3Q~WyJsV01mMldTcFdTZ\
+XlWNldFMzB
+ OZTZnIiwiYWlkIix7InRydXN0X3RpZXIiOiJ2aXJ0dWFsIn1d~WyJHdW5wNDBaOEdOb\
+WktNS04MWs
+ wUndBIiwic3ViIiwidXJuOmFpZDpnbG9iYWw6aWQtdHBma3gtcWR6dHMtd210Ym0tcm\
+5qcGMiXQ~
+X-1ID-Contact-Token: be214e9e
+Hardware-Attestation: v=1;
+ typ=VRT;
+ alg=RS256;
+ h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+ferences:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof:from:
+ to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+s:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof;
+ bh=vj-a5DUTo47HIO9SMZ9mTYE7CmfNEiSlFJWvHPz0cZM;
+ ts=1793038874;
+ chain=MIIMJQYJKoZIhvcNAQcCoIIMFjCCDBICAQExDTALBglghkgBZQMEAgEwCwYJK\
+oZIhvcNAQc
+ BoIIKfDCCBAcwggLvoAMCAQICFHxB3ODPK11ep5JV6XmCS+OajD/SMA0GCSqGSIb3DQ\
+EBCwUAMC4x
+ DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+2MTAyNjE1N
+ DE0OFoXDTI3MTAyNjE1NDE0OFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+YWlkOmdsb2
+ JhbDppZC10cGZreC1xZHp0cy13bXRibS1ybmpwYzEjMCEGA1UEBRMaaWQtdHBma3gtc\
+WR6dHMtd21
+ 0Ym0tcm5qcGMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDmvOLXN3YfX1\
+QwVk1AOCPj
+ C6CKFsZ3J36n0WaNuTg60IvJ3WU6k2V64/ZrdpFS4BbVDU+2+V4xh0T8/8x6QZvHTcY\
+v4yEhjkOnY
+ ljO8T4pF74nf9YcwgZiDpK00gGo1ZK891CW+lONwnVQEV/TUIePBnY63OXbZN88r7Zr\
+2sXyGoAnp0
+ AK8EuCL+jfvFPuTr1EXO9dy9j9qXfNbuLupWYBHqWytHVHS6GMavHxAE/0buLB2bSRc\
+pkEzDVQnFk
+ alaWT0aXszZLTOhX0trXDc4BhIQd/PDrOxCJ7Q5XrA3j3b+BFc1wzqC+N189k0hQPDA\
+lqoSLLtSqc
+ W5nneygWyXAtAgMBAAGjgeMwgeAwNAYDVR0RBC0wK4YpdXJuOmFpZDpnbG9iYWw6aWQ\
+tdHBma3gtc
+ WR6dHMtd210Ym0tcm5qcGMwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYD\
+VR0OBBYEFJ
+ 0whDIaz3zGr6oJX0vTmPJNLqFaMB8GA1UdIwQYMBaAFGciwHngVXI2J7NEovNM34Bd3\
+5auMBUGCis
+ GAQQBg9RfAQEEB3ZpcnR1YWwwIgYKKwYBBAGD1F8BAgQUMjAyNi0wOS0yNVQxMDo0ND\
+oyNFowDwYK
+ KwYBBAGD1F8BAwQBADANBgkqhkiG9w0BAQsFAAOCAQEAXmenwvp6D9ij1VCieK+NOAI\
+yCH2gEwFP2
+ vgXMgyW7wE77bN4dDjvNVw0aqMY9e45xDNpMp/Z4OZiZmEDWpwIXiBTJkVI1jqNhbaN\
+rC3/+rNKSi
+ FfOfI/uR56E/rn9HC0a/vCg79qoz4N4ecbgNfeCdnoWvodPPChVchdGiHi8H7kR9uBO\
+e3iuWTPRBa
+ VQM9wZXSLMFrd7Y5CEAWjh9XYpnyh/whPRL5clxLp646DKbopQzHnitInqobalesX1a\
+QBQYZtSVun
+ u0tjXcYZSHYBcXetFyDipTB4EeHj9AgiUvpa+l/tcv6MDoCC5yWdx52Ti6v1spziXSH\
+VtIuTUzFuf
+ jCCA0gwggIwoAMCAQICFEhBGCtvI+p+lYa/sOD7w5IrskGxMA0GCSqGSIb3DQEBCwUA\
+MCYxDDAKBg
+ NVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAeFw0yNjAzMTQxNDEzNDdaF\
+w0zMTAzMTM
+ xNDEzNDdaMC4xDDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZS\
+BDQSBBMIIB
+ IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAueeMbFQ0VCd3zBECEit2soc9g0x\
+aRwzL4QT+j
+ B6k7f9dehwyTY/tqlyXQJlR/BnV8zMJv7bfZ6xq8eEnd73HaHcKVJxdg4VQEmfHtk4m\
+GAfWuAy7j3
+ N5TsPpcFTqgkJlAwUp3kH3yDVPvO1qHzbVmUFdvDscthxQ3xYVP1pCPdWsoiP4oR0L0\
+EyaaqmTwG2
+ J/hIw/vAGqwWx4CrMsg8VvKDpsLPNp2IZ/HkXc+ztw3tsPXKWaLiTMli8RvZ8FEjsQ9\
+33Nfr23DHq
+ EZgS0QA8fUZoaxzogdhxVue/W7KnZM8ENdP0jOf0l5oUncGo8VP5p5BmQhP73J3bVMy\
+eQf7cIwIDA
+ QABo2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4E\
+FgQUZyLAee
+ BVcjYns0Si80zfgF3flq4wHwYDVR0jBBgwFoAUw7fpWXXFX/lGDy85m5SqTPkl8PAwD\
+QYJKoZIhvc
+ NAQELBQADggEBAIVAxZlTfr2eEitQkDzx/Vxs5CftPYgIVJAt5SzSvoVjKQWfkth7PC\
+lZeGjGmZg9
+ vozqwuFo+Tnvq1bCe8loiZn0PXwsjEeNxgKAnAGcg7KvacsnyH120DuvnT1NE33y/vR\
+4GNqpnvFzf
+ 77DqlmN4BL8Yoa1vYp1XNehHg79YkS3FlGXuaN7ku7WU3Uuv25Em9ZbvNbfZyvGGeto\
+8TWNkgfWnF
+ /asfTFjYwUrF+8k4xxAFZ/0OjjM3Y0v0mpdf0XAE8a846PG59tn3qnopCQmqKuJTiv5\
+CgWX8/RdAR
+ jVR/eQIwoaduW5YhmEFzMz24kLlJ5us6jHSGCYPzbT84OpLowggMhMIICCaADAgECAh\
+RnIjFxQzVL
+ iE7JnREz6PpYT9J0DzANBgkqhkiG9w0BAQsFADAmMQwwCgYDVQQKDAMxSUQxFjAUBgN\
+VBAMMDTFJR
+ CBSb290IENBIEEwIBcNMjYwMzE0MTQxMzQ3WhgPMjA1NjAzMDYxNDEzNDdaMCYxDDAK\
+BgNVBAoMAz
+ FJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTCCASIwDQYJKoZIhvcNAQEBBQADggEPA\
+DCCAQoCggE
+ BAOAkpJayeSScKqR0JEmx+i6EGae5F6roRJsqGQRA/fwZMsw7JXeKNyMhXcb2n6w7uH\
+uWA8xiMYx4
+ Arwr8FIGxGben3pjqkjPdVTyjLgczBKtK7Rws+yf70v57H8N/zaoBTfo/qtR8hx1cfi\
+91vMED1q1S
+ 6iNkVBT8lPaHmS+lymmi9DzSMC9jcQCjLnObkPwVDzYw7IeyODOYA+l/Vkf+GRJ71Hd\
+LJYpfHyTy0
+ Y8OqJtnqv5BZeaV1u5oqXX9rn4mBCHNZRAbX9+JKwljNzxL55dEbOHhIqw4q8cezxT9\
+fBjoKDcmkP
+ DTWWUjqguizK1naFzur/DCkFXAnCJ0bE33T0CAwEAAaNFMEMwEgYDVR0TAQH/BAgwBg\
+EB/wIBATAO
+ BgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFMO36Vl1xV/5Rg8vOZuUqkz5JfDwMA0GCSq\
+GSIb3DQEBC
+ wUAA4IBAQAIUV87JRvdpKGik3xkdij2bzj97MWbxwXpn8G+LSAsGnoGZTbR87aj+6nC\
+6ln7BxtAmq
+ G/Htq24zI6T2jGPNd9vJIJe4KFT0xLqtwH+Y6GTgKx34s4EJfa+UcE/Rt8vwIA052Qx\
+erlCreT9bv
+ D1HfLenVADbyIzL6g+nlfBEYqDLvgS+xqWw78u7Jr5rAqctYrGNGkpYdddixm6Cbnhk\
+m4jMd+cDCq
+ +qH18tBBPiM9icT19fqz88WfWCOYmHFBFabQWVtCJPN7C1yXVRume+OWsJzgEJ5K4kc\
+Ldm9K/yUW5
+ ru00K8wL/ytD0107mH9w2MagpdOMPHKYBGj3ea1huMmMYIBbzCCAWsCAQEwRjAuMQww\
+CgYDVQQKDA
+ MxSUQxHjAcBgNVBAMMFTFJRCBJbnRlcm1lZGlhdGUgQ0EgQQIUfEHc4M8rXV6nklXpe\
+YJL45qMP9I
+ wCwYJYIZIAWUDBAIBMA0GCSqGSIb3DQEBCwUABIIBABUPlVJLtKq+4xRjjfw7W13AVr\
+UiN5r3tFEn
+ DZF+I9TCHD6pBXL4AK9GzqSvUuzUv2nxGUoJJoG3jCT2AkfrchC/B7kETTCEIZzFqwi\
+LIufR1gje3
+ Q98D6iEWk9AaB/9cb4Msrd+T5eTwXlCML8J6FOu+830xieqvLLaVsZ1zM15fty3Czee\
+lORux/GHJf
+ jp2Cw5vPmt5lNpQNnQLCtoAlRPe6YGkSpmOEUk6G20NnPhdbEozVlTWTD78JHYFMQ1h\
+C81b7GVmSh
+ v5NHC8q952YErbBwGyP8uV3jVMG2hOvnaiWnQbEzYnGjch4ijPrfNe/CAms0zDiw+t0\
+JwfhrLL+g=;
+ aid=urn:aid:global:id-tpfkx-qdzts-wmtbm-rnjpc;
+ bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+lwIjoiYWly
+ cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+1zL2FnZW50
+ cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLXRwZmt4LXFkenRzLXdtdGJtLXJuanB\
+jIiwiaWF0I
+ joxNzkzMDM4ODcyLCJleHAiOjE3OTMwNDI0NzIsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+UlNBIiwibi
+ I6IjVyemkxemQySDE5VU1GWk5RRGdqNHd1Z2loYkdkeWQtcDlGbWpiazRPdENMeWQxb\
+E9wTmxldVA
+ yYTNhUlV1QVcxUTFQdHZsZU1ZZEVfUF9NZWtHYngwM0dMLU1oSVk1RHAySll6dkUtS1\
+JlLUozX1dI
+ TUlHWWc2U3ROSUJxTldTdlBkUWx2cFRqY0oxVUJGZjAxQ0hqd1oyT3R6bDIyVGZQSy0\
+yYTlyRjhoc
+ UFKNmRBQ3ZCTGdpX28zN3hUN2s2OVJGenZYY3ZZX2FsM3pXN2k3cVZtQVI2bHNyUjFS\
+MHVoakdyeD
+ hRQlA5Rzdpd2RtMGtYS1pCTXcxVUp4WkdwV2xrOUdsN00yUzB6b1Y5TGExdzNPQVlTR\
+Uhmenc2enN
+ RaWUwT1Y2d040OTJfZ1JYTmNNNmd2amRmUFpOSVVEd3dKYXFFaXk3VXFuRnVaNTNzb0\
+ZzbHdMUSIs
+ ImUiOiJBUUFCIn19LCJhaWQiOnsidHJ1c3RfdGllciI6InZpcnR1YWwifX0.iMc1-ui\
+uj6F_vnkHZ
+ 3tO0YOhfUYv4Mvr6229NpWf_0hExKK4m3qK3j01zoKiOXCfuSuEQYkCBpWFeGRRWu8_\
+Lw
+
+Hardware-attested email from the AIRS reference implementation.
+Identity tier: virtual
+]]></artwork>
+        </figure>
+      </section>
+
+      <section anchor="example-email-5">
+        <name>Example 5: Declared-Tier Software Key (Combined Mode)</name>
+        <t>
+          The declared tier: a software-held P-256 key (typ=SFT, alg=ES256) with no hardware root.  The header structure is identical to the hardware tiers, so verifiers treat it uniformly and simply observe the lower tier.
+        </t>
+        <figure>
+          <name>Example 5: Declared-Tier Software Key (Combined Mode)</name>
+          <artwork type="email"><![CDATA[
+NOTE: '\' line wrapping per RFC 8792
+
+Delivered-To: id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com
+X-Spam-Status: No
+Received: from [172.22.1.94] (unknown [110.143.72.26] (AS1221 \
+Telstra Limited, AU))
+ (using TLSv1.3 with cipher TLS13_AES_256_GCM_SHA384)
+ by mail.mailpal.com (Stalwart SMTP) with ESMTPSA id 4ADBF5E3273DD25;
+ Mon, 26 Oct 2026 18:22:32 +0000
+Authentication-Results: mail.mailpal.com; none
+Return-Path: <id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com>
+DKIM-Signature: v=1; a=rsa-sha256; s=rsa; d=mailpal.com; \
+c=relaxed/relaxed; r=y;
+ h=MIME-Version:Content-Transfer-Encoding:Content-Type:Message-ID:Da\
+te
+ :Subject:To:From:Reply-To:Cc:In-Reply-To:References:List-Id
+ :List-Unsubscribe:Organization:User-Agent:Thread-Topic:Thread-Index;
+ t=1793038952; x=1793902952; bh=SBrxyAzkA9Uw7luX3YEZSZrwdWg3z7t09dF6\
+bOUJmPg=
+ ; b=QcX7bpVx4PkIyqTpFDYe2n6NuzB8RPdTFqgxkgmHeD8Ut1nOn7+Unr8YO2wUzx/\
++Pj2eWnY
+ cF5pV+9oYxvceBiAhNgiQtpvuhwaqLucNx+KzyuST3ueg225+JZykI8ndvDYjfXDFXg\
+VzbYPrMi
+ WHxN/UIyxCLaJRP4RtxjsMfBG7WMfQ8i2rNeVuX0ys4o5sOLXu7DaB7r/hdMs+YTbdL\
+R7XlTWGW
+ WgmSvPseBFkYdcWNpXbkv2nGZEjKLR9fkjJexTHhqbUYhhLaItrJnDrDKqBqMeF80C1\
+BmNunkP7
+ UZhJtGYe+uoGJwhiuymy26ddlHe3m4RkaB0+T+53DCrA7g==;
+Authentication-Results: mailpal.com; hw-attest=pass header.typ=SFT \
+header.alg=ES256 header.path=registrar header.tier=declared \
+header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq"
+Authentication-Results: mailpal.com; hw-trust=pass \
+header.mode=identified header.tier=declared header.issuer="https://1\
+id.com/realms/agents" header.aid="urn:aid:global:id-hgsst-vgcfx-pwdv\
+w-jkbjq"
+From: Declared Example Agent <id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com>
+To: id-hgsst-vgcfx-pwdvw-jkbjq@mailpal.com
+Subject: Example 5: declared-tier software key (Combined Mode)
+Date: Tue, 27 Oct 2026 04:22:27 +1000
+Message-ID: <179303894712.4072.5248218054662363208@mailpal.com>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Hardware-Trust-Proof: eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC\
+1lczI1Ni0x
+ IiwidHlwIjoiYWlycy1lbWFpbCtzZC1qd3QifQ.eyJpc3MiOiJodHRwczovLzFpZC5j\
+b20vcmVhbG
+ 1zL2FnZW50cyIsImlhdCI6MTc5MzAzODk0NywiZXhwIjoxNzkzMDQyNTQ3LCJub25jZ\
+SI6Inh5T0J
+ tc0Y4NWVBREhxeVgxNXdnUERidXMwNjBFUjdHUTdzUzJzQmhCemMiLCJfc2RfYWxnIj\
+oic2hhLTI1
+ NiIsIl9zZCI6WyJkSlFjMl9XdUtOQVVrWmtaREIySE9SR3IzTWpJdjZhTmV5S3ZPU3R\
+rRTdRIiwiZ
+ UxkblV6anhhZk9VT2ZBN25KNGtxT2g1ek9ySS1USURhd0p5NlROWTFQVSJdLCJjbmYi\
+OnsiandrIj
+ p7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiRTVrWHVybm8tZzhWb0tLS1VCR\
+kZoNllaWS1
+ lYUk2UXdhUmJLaEJudGNwQSIsInkiOiJ2eERwVUI4MkxOM2FtdGhaUUlBY1Y1dzlEQk\
+lDSTYtOE9L
+ bkhTUFVGV2VzIn19fQ.4ukK935L9Y2HrCY1tv5D64eUqt6uuF1gJz49-9M8oN2PPs-K\
+sbYnf55jT9
+ CsyZe1Bgz9D-zIKvM8xv3Af40SBg~WyJKblB6UU4xRmZ3RlVXZjZFR1V6ZFpRIiwiYW\
+lkIix7InRy
+ dXN0X3RpZXIiOiJkZWNsYXJlZCJ9XQ~WyJFMXNjOWNibGtkM2Z4OEtjMzZmQmdRIiwi\
+c3ViIiwidX
+ JuOmFpZDpnbG9iYWw6aWQtaGdzc3QtdmdjZngtcHdkdnctamtianEiXQ~
+X-1ID-Contact-Token: 55b10d20
+Hardware-Attestation: v=1;
+ typ=SFT;
+ alg=ES256;
+ h=from:to:cc:subject:date:message-id:sender:reply-to:in-reply-to:re\
+ferences:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof:from:
+ to:cc:subject:date:message-id:sender:reply-to:in-reply-to:reference\
+s:
+ mime-version:content-type:content-transfer-encoding:hardware-trust-\
+proof;
+ bh=SBrxyAzkA9Uw7luX3YEZSZrwdWg3z7t09dF6bOUJmPg;
+ ts=1793038949;
+ chain=MIIKnAYJKoZIhvcNAQcCoIIKjTCCCokCAQExDTALBglghkgBZQMEAgEwCwYJK\
+oZIhvcNAQc
+ BoIIJsjCCAz0wggIloAMCAQICFAmaM7L9fC5Yr6VbXZPuLhshXIIsMA0GCSqGSIb3DQ\
+EBCwUAMC4x
+ DDAKBgNVBAoMAzFJRDEeMBwGA1UEAwwVMUlEIEludGVybWVkaWF0ZSBDQSBBMB4XDTI\
+2MTAyNjE4M
+ jEwMFoXDTI3MTAyNjE4MjEwMFowZzEMMAoGA1UECgwDMUlEMTIwMAYDVQQDDCl1cm46\
+YWlkOmdsb2
+ JhbDppZC1oZ3NzdC12Z2NmeC1wd2R2dy1qa2JqcTEjMCEGA1UEBRMaaWQtaGdzc3Qtd\
+mdjZngtcHd
+ kdnctamtianEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQTmRe6uej6DxWgoopQEU\
+WHphlj55oj
+ pDBpFsqEGe1ykL8Q6VAfNizd2prYWUCAHFecPQwSAiOvvDipx0j1BVnro4HkMIHhMDQ\
+GA1UdEQQtM
+ CuGKXVybjphaWQ6Z2xvYmFsOmlkLWhnc3N0LXZnY2Z4LXB3ZHZ3LWprYmpxMAwGA1Ud\
+EwEB/wQCMA
+ AwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBS+ULkKnFcJ9KnyNalcVxIrLiOAzDAfB\
+gNVHSMEGDA
+ WgBRnIsB54FVyNiezRKLzTN+AXd+WrjAWBgorBgEEAYPUXwEBBAhkZWNsYXJlZDAiBg\
+orBgEEAYPU
+ XwECBBQyMDI2LTEwLTI2VDE4OjIxOjAwWjAPBgorBgEEAYPUXwEDBAEAMA0GCSqGSIb\
+3DQEBCwUAA
+ 4IBAQC3KkO5fBaqECjxqkaeT8ap3AgxgNEMfO6GhiK/HtbggkswKRRTojB6VAy2bkdQ\
+ToHpOnhq9l
+ 7MOa/QToQxYx21l0T4lRRL7pohKH3691vO03eXDHq6LbYG/zBZqjqe9Nq8EoMLw7TvA\
+hcyG4uVDRi
+ iiX1scAY4i8sE8exusc7VfjMjYTfPlA4yZ3znK91r4CItQjA2eieFmH4be5/vJKk0Rp\
+O/WmiFIZyp
+ Mh/urMDyC9zSPtRMZq+UDjHqg9EC8NPE/Dh14+8yzdUO6kVydNSgSde7E0IKizIB/kw\
+8Te3R9DV+f
+ ulavfv2c5iJz5fjL7vaxom02B43U6loSxukDFe7MIIDSDCCAjCgAwIBAgIUSEEYK28j\
+6n6Vhr+w4P
+ vDkiuyQbEwDQYJKoZIhvcNAQELBQAwJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xS\
+UQgUm9vdCB
+ DQSBBMB4XDTI2MDMxNDE0MTM0N1oXDTMxMDMxMzE0MTM0N1owLjEMMAoGA1UECgwDMU\
+lEMR4wHAYD
+ VQQDDBUxSUQgSW50ZXJtZWRpYXRlIENBIEEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwA\
+wggEKAoIBA
+ QC554xsVDRUJ3fMEQISK3ayhz2DTFpHDMvhBP6MHqTt/116HDJNj+2qXJdAmVH8GdXz\
+Mwm/tt9nrG
+ rx4Sd3vcdodwpUnF2DhVASZ8e2TiYYB9a4DLuPc3lOw+lwVOqCQmUDBSneQffINU+87\
+WofNtWZQV2
+ 8Oxy2HFDfFhU/WkI91ayiI/ihHQvQTJpqqZPAbYn+EjD+8AarBbHgKsyyDxW8oOmws8\
+2nYhn8eRdz
+ 7O3De2w9cpZouJMyWLxG9nwUSOxD3fc1+vbcMeoRmBLRADx9RmhrHOiB2HFW579bsqd\
+kzwQ10/SM5
+ /SXmhSdwajxU/mnkGZCE/vcndtUzJ5B/twjAgMBAAGjZjBkMBIGA1UdEwEB/wQIMAYB\
+Af8CAQAwDg
+ YDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBRnIsB54FVyNiezRKLzTN+AXd+WrjAfBgNVH\
+SMEGDAWgBT
+ Dt+lZdcVf+UYPLzmblKpM+SXw8DANBgkqhkiG9w0BAQsFAAOCAQEAhUDFmVN+vZ4SK1\
+CQPPH9XGzk
+ J+09iAhUkC3lLNK+hWMpBZ+S2Hs8KVl4aMaZmD2+jOrC4Wj5Oe+rVsJ7yWiJmfQ9fCy\
+MR43GAoCcA
+ ZyDsq9pyyfIfXbQO6+dPU0TffL+9HgY2qme8XN/vsOqWY3gEvxihrW9inVc16EeDv1i\
+RLcWUZe5o3
+ uS7tZTdS6/bkSb1lu81t9nK8YZ62jxNY2SB9acX9qx9MWNjBSsX7yTjHEAVn/Q6OMzd\
+jS/Sal1/Rc
+ ATxrzjo8bn22feqeikJCaoq4lOK/kKBZfz9F0BGNVH95AjChp25bliGYQXMzPbiQuUn\
+m6zqMdIYJg
+ /NtPzg6kujCCAyEwggIJoAMCAQICFGciMXFDNUuITsmdETPo+lhP0nQPMA0GCSqGSIb\
+3DQEBCwUAM
+ CYxDDAKBgNVBAoMAzFJRDEWMBQGA1UEAwwNMUlEIFJvb3QgQ0EgQTAgFw0yNjAzMTQx\
+NDEzNDdaGA
+ 8yMDU2MDMwNjE0MTM0N1owJjEMMAoGA1UECgwDMUlEMRYwFAYDVQQDDA0xSUQgUm9vd\
+CBDQSBBMII
+ BIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4CSklrJ5JJwqpHQkSbH6LoQZp7\
+kXquhEmyoZ
+ BED9/BkyzDsld4o3IyFdxvafrDu4e5YDzGIxjHgCvCvwUgbEZt6femOqSM91VPKMuBz\
+MEq0rtHCz7
+ J/vS/nsfw3/NqgFN+j+q1HyHHVx+L3W8wQPWrVLqI2RUFPyU9oeZL6XKaaL0PNIwL2N\
+xAKMuc5uQ/
+ BUPNjDsh7I4M5gD6X9WR/4ZEnvUd0slil8fJPLRjw6om2eq/kFl5pXW7mipdf2ufiYE\
+Ic1lEBtf34
+ krCWM3PEvnl0Rs4eEirDirxx7PFP18GOgoNyaQ8NNZZSOqC6LMrWdoXO6v8MKQVcCcI\
+nRsTfdPQID
+ AQABo0UwQzASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4\
+EFgQUw7fpW
+ XXFX/lGDy85m5SqTPkl8PAwDQYJKoZIhvcNAQELBQADggEBAAhRXzslG92koaKTfGR2\
+KPZvOP3sxZ
+ vHBemfwb4tICwaegZlNtHztqP7qcLqWfsHG0Caob8e2rbjMjpPaMY81328kgl7goVPT\
+Euq3Af5joZ
+ OArHfizgQl9r5RwT9G3y/AgDTnZDF6uUKt5P1u8PUd8t6dUANvIjMvqD6eV8ERioMu+\
+BL7GpbDvy7
+ smvmsCpy1isY0aSlh112LGboJueGSbiMx35wMKr6ofXy0EE+Iz2JxPX1+rPzxZ9YI5i\
+YcUEVptBZW
+ 0Ik83sLXJdVG6Z745awnOAQnkriRwt2b0r/JRbmu7TQrzAv/K0PTXTuYf3DYxqCl04w\
+8cpgEaPd5r
+ WG4yYxgbEwga4CAQEwRjAuMQwwCgYDVQQKDAMxSUQxHjAcBgNVBAMMFTFJRCBJbnRlc\
+m1lZGlhdGU
+ gQ0EgQQIUCZozsv18LlivpVtdk+4uGyFcgiwwCwYJYIZIAWUDBAIBMAoGCCqGSM49BA\
+MCBEgwRgIh
+ ANLrbmlEEOwGjYDJzi7poPc3+S/K2+AzxpTzt8Iteel/AiEA1F1GunBnmGAVenQDj8g\
+n0a84jAUvI
+ rCZYXDSKgi8jRI=;
+ aid=urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq;
+ bind=eyJhbGciOiJFUzI1NiIsImtpZCI6IjFpZC1od2F0dGVzdC1lczI1Ni0xIiwidH\
+lwIjoiYWly
+ cy1lbWFpbC1iaW5kaW5nK2p3dCJ9.eyJpc3MiOiJodHRwczovLzFpZC5jb20vcmVhbG\
+1zL2FnZW50
+ cyIsInN1YiI6InVybjphaWQ6Z2xvYmFsOmlkLWhnc3N0LXZnY2Z4LXB3ZHZ3LWprYmp\
+xIiwiaWF0I
+ joxNzkzMDM4OTQ3LCJleHAiOjE3OTMwNDI1NDcsImNuZiI6eyJqd2siOnsia3R5Ijoi\
+RUMiLCJjcn
+ YiOiJQLTI1NiIsIngiOiJFNWtYdXJuby1nOFZvS0tLVUJGRmg2WVpZLWVhSTZRd2FSY\
+ktoQm50Y3B
+ BIiwieSI6InZ4RHBVQjgyTE4zYW10aFpRSUFjVjV3OURCSUNJNi04T0tuSFNQVUZXZX\
+MifX0sImFp
+ ZCI6eyJ0cnVzdF90aWVyIjoiZGVjbGFyZWQifX0.0yr1M1LlfWJXMPj_uaplsn0FEne\
+3G2U22Q0Y0
+ 5cYbuHIt9ma1UTfR_CGJFdfjuusRg9AUsjTN3RQ3KdeV1oijw
+
+Hardware-attested email from the AIRS reference implementation.
+Identity tier: declared
+]]></artwork>
+        </figure>
+      </section>
+
+
+      <section anchor="example-verification-failures">
+        <name>Verification Failure Examples</name>
+        <t>
+          The following Authentication-Results fields were produced by
+          the verification command above (hw-attest-verify 3.0.0) for
+          modified copies of Example 5, and are folded here at
+          whitespace.  Verifiers should give similar diagnostics in the
+          comment.
+        </t>
+        <t>
+          One character of the body changed after sending: the Mode 1
+          signature no longer matches the recomputed attestation-input,
+          and the recomputed message-binding nonce differs from the one
+          the Registrar signed:
+        </t>
+        <artwork><![CDATA[
+Authentication-Results: mailpal.com; hw-attest=fail header.typ=SFT
+  header.alg=ES256 (Signature verification failed with the SignerInfo
+  signer certificate: Cryptographic signature does not match)
+Authentication-Results: mailpal.com; hw-trust=fail
+  header.mode=identified header.tier=declared
+  header.issuer="https://1id.com/realms/agents"
+  header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq"
+  (Message-binding nonce mismatch: got
+  'xyOBmsF85eADHqyX15wgPDbus060ER7GQ7sS2sBhBzc', expected
+  'Fs5k4H-5uqYRR4wuu3ncjKZGFhn_TkoFql0CkiZA-gE')
+]]></artwork>
+        <t>
+          The Hardware-Attestation field removed in transit: the SD-JWT
+          carries "cnf", so it is a Combined-mode presentation and is
+          rejected without its Mode 1 partner
+          (<xref target="sd-jwt-verification"/>):
+        </t>
+        <artwork><![CDATA[
+Authentication-Results: mailpal.com; hw-trust=fail
+  header.mode=identified header.tier=declared
+  header.issuer="https://1id.com/realms/agents"
+  header.aid="urn:aid:global:id-hgsst-vgcfx-pwdvw-jkbjq" (SD-JWT
+  carries cnf Combined mode but the message has no
+  Hardware-Attestation field)
+]]></artwork>
+        <t>
+          The optional "sub" disclosure withheld from the
+          Hardware-Trust-Proof field: Mode 1 fails because its "h" list
+          covers that field, including the disclosure selection.  With
+          "--trust-hidden-issuer https://1id.com/realms/agents" added to
+          the command, Mode 2 is a hidden-identity presentation from a
+          trusted issuer, and it fails together with the Mode 1 proof it
+          depends on (<xref target="combined-mode"/>):
+        </t>
+        <artwork><![CDATA[
+Authentication-Results: mailpal.com; hw-attest=fail header.typ=SFT
+  header.alg=ES256 (Signature verification failed with the SignerInfo
+  signer certificate: Cryptographic signature does not match)
+Authentication-Results: mailpal.com; hw-trust=fail header.mode=hidden
+  header.tier=declared header.issuer="https://1id.com/realms/agents"
+  (Combined mode: the Hardware-Attestation proof this presentation
+  depends on is fail Signature verification failed with the
+  SignerInfo signer certificate: Cryptographic signature does not
+  match)
+]]></artwork>
+      </section>
+    </section>
+    <!-- ====================================================== -->
+    <section anchor="acknowledgments">
+      <name>Acknowledgments</name>
+      <t>
+        The concept of using hardware attestation for email sender
+        verification was developed in the context of building a
+        hardware identity registrar for autonomous AI agents.  The
+        author thanks the Trusted Computing Group for the TPM 2.0
+        specification, the authors of <xref target="RFC9901"/> (SD-JWT)
+        for the selective disclosure mechanism, the authors of
+        <xref target="RFC9334"/> (RATS Architecture) for establishing
+        the remote attestation architecture that this document builds
+        upon, and the authors of <xref target="RFC8141"/> (URN) for the
+        persistent identifier framework that underpins the federated
+        agent identity model.
+      </t>
+    </section>
+
+  </back>
+
+</rfc>
