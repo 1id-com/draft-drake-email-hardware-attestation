@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-model href="urn:ietf:rfc:7991" type="application/relax-ng-compact-syntax"?>
+<!--
+  submissionType is deliberately not set: RFC 7991 section 2.45.12 makes
+  "IETF" the default.  Writing it out makes the Datatracker's idnits3
+  report SUBMISSION_TYPE_UNEXPECTED for any draft that has no stream there
+  yet (RFC 7841), which is the case for an individual draft.
+-->
 <rfc xmlns:xi="http://www.w3.org/2001/XInclude"
      docName="draft-drake-email-hardware-attestation-03"
      ipr="trust200902"
-     submissionType="IETF"
      category="exp"
      xml:lang="en"
      version="3">
@@ -26,7 +31,7 @@
       </address>
     </author>
 
-    <date year="2026" month="October" day="25"/>
+    <date year="2026" month="October" day="27"/>
 
     <area>Security</area>
     <workgroup/>
